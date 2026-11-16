@@ -378,7 +378,7 @@ async def osm_sites(request):
     if not z:
         return err(404, "zone not found")
     try:
-        found = await asyncio.get_running_loop().run_in_executor(None, lambda: Z.osm_sites(*z.meta["bbox"]))
+        found = await asyncio.get_running_loop().run_in_executor(None, lambda: Z.osm_sites(z))
     except Exception as e:
         return err(502, str(e))
     return web.json_response([dict(name=f["name"], lat=f["lat"], lon=f["lon"], height_m=f["height_m"], azimuths=[0.0, 120.0, 240.0],

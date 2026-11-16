@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -16,6 +17,7 @@ import numpy as np
 import config
 
 ZONES = config.ZONES
+OSM_API = "https://api.openstreetmap.org/api/0.6/map"
 OVERPASS_MIRRORS = ("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
                     "https://overpass.private.coffee/api/interpreter")
 UA = "kubendt-radio-zones/1.0"
@@ -114,30 +116,59 @@ def create(name, bbox):
     return zid
 
 
-def overpass(query, timeout=240):
-    """Overpass answers 429/502/504 when busy: retry, then try the public mirrors."""
+def overpass(query, timeout=60):
+    """One try per public Overpass server."""
     data = urllib.parse.urlencode({"data": query}).encode()
     last = None
-    for attempt in range(6):
-        url = OVERPASS_MIRRORS[attempt % len(OVERPASS_MIRRORS)]
+    for url in OVERPASS_MIRRORS:
         try:
             req = urllib.request.Request(url, data=data, headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except Exception as exc:
             last = exc
-            time.sleep(3 + 3 * attempt)
-    raise RuntimeError(f"OpenStreetMap (Overpass) does not answer: {last}")
+    raise RuntimeError(f"Overpass does not answer: {last}")
+
+
+def osm_api(s, w, n, e, depth=0):
+    """The elements of an area from the OpenStreetMap API, split in four while it holds too many nodes."""
+    url = f"{OSM_API}?bbox={w},{s},{e},{n}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            root = ET.fromstring(r.read())
+        return {(el.tag, el.get("id")): el for el in root if el.tag in ("node", "way", "relation")}
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (400, 509) or depth >= 4:
+            raise RuntimeError(f"the OpenStreetMap API answered {exc.code}: {exc.read().decode(errors='replace')[:200]}")
+    lat, lon = (s + n) / 2, (w + e) / 2
+    out = {}
+    for box in ((s, w, lat, lon), (s, lon, lat, e), (lat, w, n, lon), (lat, lon, n, e)):
+        out.update(osm_api(*box, depth=depth + 1))
+    return out
 
 
 def fetch(z):
+    """Download the OpenStreetMap extract of the zone."""
     z.save(status="fetching", step="downloading OpenStreetMap", error=None)
     s, w, n, e = z.meta["bbox"]
-    raw = overpass(f"[out:xml][timeout:180];(node({s},{w},{n},{e});way({s},{w},{n},{e});relation({s},{w},{n},{e}););out body;>;out skel qt;")
+    try:
+        elements = osm_api(s, w, n, e)
+        root = ET.Element("osm", version="0.6", generator="kubendt-radio")
+        for tag in ("node", "way", "relation"):
+            root.extend(el for (t, _), el in elements.items() if t == tag)
+        raw = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        source = "OpenStreetMap API"
+    except Exception as first:
+        try:
+            raw = overpass(f"[out:xml][timeout:120];(node({s},{w},{n},{e});way({s},{w},{n},{e});relation({s},{w},{n},{e}););out body;>;out skel qt;", timeout=150)
+            source = "Overpass"
+        except Exception as second:
+            raise RuntimeError(f"OpenStreetMap could not be downloaded. API: {first}. {second}")
     (z.dir / "zone.osm").write_bytes(raw)
     b = parse_buildings(z)
     roads = sum(1 for _ in re.finditer(rb'<tag k="highway"', raw))
-    z.save(status="fetched", step=None, stats=dict(osm_mb=round(len(raw) / 1e6, 1), buildings=len(b), highway_ways=roads,
+    z.save(status="fetched", step=None, stats=dict(osm_mb=round(len(raw) / 1e6, 1), buildings=len(b), highway_ways=roads, source=source,
                                                     buildings_with_height=sum(1 for x in b if x["height_source"] != "default")))
 
 
@@ -189,29 +220,38 @@ def parse_buildings(z):
     return out
 
 
-def osm_sites(s, w, n, e):
-    """Mobile telephony masts and antennas mapped in OpenStreetMap inside the box."""
-    b = f"({s},{w},{n},{e})"
-    q = ("[out:json][timeout:60];("
-         f'nwr["communication:mobile_phone"]{b};'
-         f'nwr["man_made"~"^(mast|tower)$"]["tower:type"="communication"]{b};'
-         f'nwr["man_made"="antenna"]{b};'
-         f'nwr["telecom"~"antenna|mobile"]{b};'
-         f'nwr["man_made"="mast"]["mast:type"="communication"]{b};'
-         ");out center tags;")
-    data = json.loads(overpass(q, timeout=90))
-    out = []
-    for el in data.get("elements", []):
-        lat = el.get("lat", el.get("center", {}).get("lat"))
-        lon = el.get("lon", el.get("center", {}).get("lon"))
-        if lat is None:
-            continue
-        t = el.get("tags", {})
+def _is_mast(t):
+    return ("communication:mobile_phone" in t or t.get("man_made") == "antenna" or "antenna" in t.get("telecom", "")
+            or "mobile" in t.get("telecom", "") or (t.get("man_made") in ("mast", "tower") and "communication" in (t.get("tower:type"), t.get("mast:type"))))
+
+
+def osm_sites(z):
+    """Mobile telephony masts and antennas mapped in OpenStreetMap inside the zone, from its extract."""
+    s_, w_, n_, e_ = z.meta["bbox"]
+    nodes, out = {}, []
+
+    def add(kind, ident, lat, lon, t):
+        if not (s_ <= lat <= n_ and w_ <= lon <= e_):
+            return
         m = re.match(r"\s*([0-9.]+)", t.get("height", ""))
-        out.append(dict(lat=lat, lon=lon, name=t.get("name") or t.get("operator") or f"osm-{el['id']}",
-                        operator=t.get("operator"), height_m=float(m.group(1)) if m else None,
-                        source=f"OpenStreetMap {el['type']}/{el['id']}", tags={k: v for k, v in t.items() if k in (
-                            "man_made", "tower:type", "communication:mobile_phone", "operator", "height", "telecom", "location")}))
+        out.append(dict(lat=lat, lon=lon, name=t.get("name") or t.get("operator") or f"osm-{ident}", operator=t.get("operator"),
+                        height_m=float(m.group(1)) if m else None, source=f"OpenStreetMap {kind}/{ident}"))
+
+    for ev, el in ET.iterparse(str(z.dir / "zone.osm"), events=("end",)):
+        if el.tag == "node":
+            lat, lon = float(el.get("lat")), float(el.get("lon"))
+            nodes[el.get("id")] = (lat, lon)
+            t = {x.get("k"): x.get("v") for x in el.findall("tag")}
+            if t and _is_mast(t):
+                add("node", el.get("id"), lat, lon, t)
+            el.clear()
+        elif el.tag == "way":
+            t = {x.get("k"): x.get("v") for x in el.findall("tag")}
+            if t and _is_mast(t):
+                pts = [nodes[x.get("ref")] for x in el.findall("nd") if x.get("ref") in nodes]
+                if pts:
+                    add("way", el.get("id"), sum(q[0] for q in pts) / len(pts), sum(q[1] for q in pts) / len(pts), t)
+            el.clear()
     return out
 
 
@@ -518,9 +558,6 @@ def config_hash(meta):
 
 if __name__ == "__main__":
     cmd = sys.argv[1]
-    if cmd == "sites-osm":
-        print(json.dumps(osm_sites(*[float(v) for v in sys.argv[2:6]])))
-        sys.exit(0)
     zone = Zone(sys.argv[2])
     try:
         {"fetch": fetch, "build": build}[cmd](zone)
