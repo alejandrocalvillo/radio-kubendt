@@ -164,8 +164,10 @@ def run(z):
     c = client()
     specs, sites = Z.clean_ues(z, z.meta["ues"]), z.meta["sites"]
     n, S = len(specs), len(sites)
-    p = dict(dt=0.5, cars=20, hysteresis_db=3.0, ttt_s=0.96, filter_k=8)
+    p = dict(dt=0.5, cars=20, hysteresis_db=3.0, ttt_s=0.96, filter_k=8, access=None)
     p.update(z.meta.get("emulation_params") or {})
+    if p["access"] is None and z.meta.get("emulated_handover"):
+        p["access"] = {}
     status_file = z.dir / "emulation.json"
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -184,7 +186,8 @@ def run(z):
     radio = LiveRadio(world, z, car_pool=int(p["cars"]), depth=3, fused=True)
     radio.place(True)
     g = radio.gain_db()
-    a3 = A3Manager(n, maps.num_sectors, maps.sector_site, p["dt"], hysteresis_db=p["hysteresis_db"], ttt_s=p["ttt_s"], filter_k=p["filter_k"])
+    a3 = A3Manager(n, maps.num_sectors, maps.sector_site, p["dt"], hysteresis_db=p["hysteresis_db"], ttt_s=p["ttt_s"], filter_k=p["filter_k"],
+                    access=p["access"], link_config=radio.link.config)
     a3.start(radio.link_state(g, g.argmax(1))[0])
     site_of = np.asarray(maps.sector_site)
     idx_in_site = []
@@ -233,8 +236,9 @@ def run(z):
         g = radio.gain_db()
         w3 = time.perf_counter()
         rsrp = radio.link_state(g, a3.serving)[0]
-        events, outage = a3.step(rsrp, lambda srv: radio.link_state(g, srv)[1])
+        events, outage = a3.step(rsrp, lambda srv: radio.link_state(g, srv)[1], gain_db=g)
         _, sinr, dl, ul = radio.link_state(g, a3.serving)
+        dl, ul = dl * a3.frac, ul * a3.frac
         sim_t = world.counts()["time_s"]
         for k in range(n):
             radio_ok[k] = (not outage[k]) and dl[k] > 0.5 and ul[k] > 0.2
@@ -273,7 +277,7 @@ def run(z):
               realtime_factor=round(min(1.0, p["dt"] * 1e3 / max(med[4], 1.0)), 2),
               step_ms=dict(sumo=round(med[0], 1), objects=round(med[1], 1), ray_tracing=round(med[2], 1), kubendt_api=round(med[3], 1), total=round(med[4], 1)),
               traffic=dict(vehicles=cnt["vehicles"], persons=cnt["persons"], car_objects=radio.cars_used),
-              a3=dict(a3.stats, hysteresis_db=a3.hys, ttt_s=a3.ttt), api_failures=api_fail, last_api_error=err, events=recent,
+              a3=dict(a3.stats, hysteresis_db=a3.hys, ttt_s=a3.ttt, emulated_handover=a3.access is not None), api_failures=api_fail, last_api_error=err, events=recent,
               ues=[dict(name=f"ue-{k}", kind=specs[k]["kind"], mode=specs[k]["mode"], lat=float(lat[k]), lon=float(lon[k]),
                         speed=round(float(u["speed"]), 1), gnb=int(site_of[a3.serving[k]]), sector=idx_in_site[a3.serving[k]],
                         sinr=round(float(sinr[k]), 1), dl=round(float(dl[k]), 2), ul=round(float(ul[k]), 2), outage=bool(outage[k]),

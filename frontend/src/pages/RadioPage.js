@@ -503,6 +503,11 @@ const RadioPage = () => {
       }
     });
 
+  const setEmulatedHandover = (on) =>
+    run('emulation', async () => {
+      setZone(await api(`/zones/${zone.id}/emulation/settings`, { method: 'PUT', body: JSON.stringify({ emulated_handover: on }) }));
+    });
+
   const emu = (zone && zone.emulation) || {};
   const live = emu.state === 'running' && Array.isArray(emu.ues);
   const liveKey = live ? `${emu.step}` : '';
@@ -958,6 +963,21 @@ const RadioPage = () => {
                     Delete namespace
                   </button>
                 </div>
+                <label className="radio-handover-switch" title="Used at the next Start of the emulation">
+                  <input
+                    type="checkbox"
+                    checked={!!zone.emulated_handover}
+                    disabled={emu.alive || working === 'emulation'}
+                    onChange={(e) => setEmulatedHandover(e.target.checked)}
+                  />
+                  <span>Emulated Handover</span>
+                </label>
+                <div className="radio-note">
+                  {zone.emulated_handover
+                    ? 'On: each handover goes through random access to the target gNB (preamble detection, contention, T304) and costs its gap of about 60 ms; it can fail and lead to re-establishment.'
+                    : 'Off: a handover is an instant switch between gNBs, with no access step and no gap.'}
+                  {emu.alive ? ' Stop the emulation to change it.' : ''}
+                </div>
                 <div className="radio-row radio-emu-row">
                   {emu.alive ? (
                     <button className="radio-stop" disabled={working === 'emulation'} onClick={() => emulation('stop')}>
@@ -994,6 +1014,20 @@ const RadioPage = () => {
                         <b>{emu.a3.rlf}</b>
                         <small>radio link failures</small>
                       </div>
+                      {emu.a3.emulated_handover && (
+                        <>
+                          <div>
+                            <b>
+                              {emu.a3.ho_failures}/{emu.a3.ho_attempts}
+                            </b>
+                            <small>handovers failed</small>
+                          </div>
+                          <div>
+                            <b>{emu.a3.gap_ms_mean == null ? '–' : `${emu.a3.gap_ms_mean} ms`}</b>
+                            <small>handover gap{emu.a3.gap_ms_p95 == null ? '' : ` · p95 ${emu.a3.gap_ms_p95} ms`}</small>
+                          </div>
+                        </>
+                      )}
                       <div>
                         <b>
                           {emu.ues.filter((u) => u.session).length}/{emu.ues.length}

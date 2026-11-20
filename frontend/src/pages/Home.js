@@ -39,6 +39,8 @@ const Home = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [clusterStatus, setClusterStatus] = useState(null);
   const [clusterLoading, setClusterLoading] = useState(false);
+  // GPUs of the radio host, from the radio service; null when there is none
+  const [gpuStatus, setGpuStatus] = useState(null);
   const [appVersion, setAppVersion] = useState(null);
   const [initialClusterLoading, setInitialClusterLoading] = useState(true);
   const [kubeInfoLoading, setKubeInfoLoading] = useState(false);
@@ -169,7 +171,18 @@ const Home = () => {
     }
   };
 
+  const fetchGpuStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/radio/gpu`);
+      const data = res.ok ? await res.json() : null;
+      setGpuStatus(data && data.available ? data : null);
+    } catch (err) {
+      setGpuStatus(null);
+    }
+  };
+
   const fetchClusterStatus = async () => {
+    fetchGpuStatus();
     try {
       setClusterLoading(true);
       const res = await fetch(`${API_BASE_URL}/cluster/status`);
@@ -658,6 +671,42 @@ const Home = () => {
                         </div>
                       </>
                     )}
+                    {gpuStatus &&
+                      gpuStatus.gpus.map((g, i) => (
+                        <React.Fragment key={`gpu-${i}`}>
+                          <div className="cluster-summary-divider" />
+                          <div
+                            className="cluster-summary-item cluster-summary-gpu"
+                            title={[
+                              `${g.name}, on the host of the radio service (nvidia-smi)`,
+                              gpuStatus.processes.length
+                                ? 'Processes on the GPU:'
+                                : 'No process is using the GPU',
+                              ...gpuStatus.processes.map(
+                                (p) =>
+                                  `  ${p.name} (pid ${p.pid})${p.memory_mib != null ? `: ${p.memory_mib} MiB` : ''}`
+                              ),
+                            ].join('\n')}
+                          >
+                            <span className="cluster-summary-label">GPU</span>
+                            <span className="cluster-summary-value">
+                              {g.utilization_pct != null ? `${g.utilization_pct}%` : '—'}
+                            </span>
+                            <span className="cluster-summary-sub">
+                              {[
+                                g.temperature_c != null ? `${g.temperature_c} °C` : null,
+                                g.power_w != null ? `${Math.round(g.power_w)} W` : null,
+                                g.memory_used_mib != null && g.memory_total_mib != null
+                                  ? `${(g.memory_used_mib / 1024).toFixed(1)}/${(g.memory_total_mib / 1024).toFixed(0)} GB`
+                                  : `${(gpuStatus.processes_memory_mib / 1024).toFixed(1)} GB in use`,
+                                `${gpuStatus.processes.length} ${gpuStatus.processes.length === 1 ? 'process' : 'processes'}`,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </span>
+                          </div>
+                        </React.Fragment>
+                      ))}
                   </div>
                 )}
                 <div className="nodes-grid">

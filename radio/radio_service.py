@@ -244,6 +244,19 @@ async def start_emulation(request):
     return web.json_response(public(z))
 
 
+async def emulation_settings(request):
+    """Emulated Handover on or off for the zone; used at the next Start."""
+    z = load(request.match_info["id"])
+    if not z:
+        return err(404, "zone not found")
+    if emulation_state(z).get("alive"):
+        return err(409, "stop the emulation first")
+    body = await request.json()
+    if "emulated_handover" in body:
+        z.save(emulated_handover=bool(body["emulated_handover"]))
+    return web.json_response(public(z))
+
+
 async def stop_emulation(request):
     z = load(request.match_info["id"])
     if not z:
@@ -423,6 +436,62 @@ async def active(request):
     return web.json_response({"id": active_id()})
 
 
+_GPU = {"at": 0.0, "data": None}
+
+
+def _num(text):
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _process_label(pid, fallback):
+    """A short name for a GPU process: the program and its first arguments, without the interpreter."""
+    try:
+        args = [a.decode(errors="replace") for a in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if a]
+    except OSError:
+        args = []
+    if not args:
+        return Path(fallback).name
+    if Path(args[0]).name.startswith("python"):
+        args = args[1:]
+    words = []
+    for a in args:
+        if a.startswith("-") or len(words) == 3:
+            break
+        words.append(Path(a).name if "/" in a else a)
+    return " ".join(words) or Path(fallback).name
+
+
+async def _nvidia_smi(*query):
+    proc = await asyncio.create_subprocess_exec("nvidia-smi", *query, "--format=csv,noheader,nounits",
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, errout = await asyncio.wait_for(proc.communicate(), timeout=5)
+    if proc.returncode:
+        raise RuntimeError(errout.decode(errors="replace").strip() or f"nvidia-smi exited with {proc.returncode}")
+    return [[c.strip() for c in line.split(",")] for line in out.decode().splitlines() if line.strip()]
+
+
+async def gpu(request):
+    """The GPUs of the host the radio service runs on, from nvidia-smi; cached for a few seconds."""
+    import time
+    if _GPU["data"] is not None and time.time() - _GPU["at"] < 3:
+        return web.json_response(_GPU["data"])
+    try:
+        rows = await _nvidia_smi("--query-gpu=name,utilization.gpu,temperature.gpu,power.draw,memory.used,memory.total")
+        apps = await _nvidia_smi("--query-compute-apps=pid,process_name,used_memory")
+        gpus = [dict(name=r[0], utilization_pct=_num(r[1]), temperature_c=_num(r[2]), power_w=_num(r[3]),
+                     memory_used_mib=_num(r[4]), memory_total_mib=_num(r[5])) for r in rows if len(r) >= 6]
+        procs = [dict(pid=int(r[0]), name=_process_label(r[0], r[1]), memory_mib=_num(r[2])) for r in apps if len(r) >= 3]
+        data = dict(available=bool(gpus), gpus=gpus, processes=procs,
+                    processes_memory_mib=sum(p["memory_mib"] or 0 for p in procs))
+    except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
+        data = dict(available=False, error=str(exc) or type(exc).__name__, gpus=[], processes=[])
+    _GPU.update(at=time.time(), data=data)
+    return web.json_response(data)
+
+
 async def health(request):
     return web.json_response({"service": "kubendt-radio", "zones": str(Z.ZONES), "max_side_m": Z.MAX_SIDE_M})
 
@@ -431,7 +500,7 @@ if __name__ == "__main__":
     a = ARGS
     Z.ZONES.mkdir(parents=True, exist_ok=True)
     app = web.Application(client_max_size=2 * 1024 * 1024)
-    app.add_routes([web.get("/health", health), web.get("/zones", zones), web.post("/zones", create), web.get("/active", active),
+    app.add_routes([web.get("/health", health), web.get("/gpu", gpu), web.get("/zones", zones), web.post("/zones", create), web.get("/active", active),
                     web.get("/zones/{id}", get), web.delete("/zones/{id}", delete), web.put("/zones/{id}/sites", put_sites),
                     web.post("/zones/{id}/sites/auto", auto_sites), web.get("/zones/{id}/sites/osm", osm_sites),
                     web.post("/zones/{id}/build", build), web.get("/zones/{id}/coverage.png", coverage),
@@ -439,5 +508,6 @@ if __name__ == "__main__":
                     web.put("/zones/{id}/ues", put_ues), web.post("/zones/{id}/ues/auto", auto_ues), web.post("/zones/{id}/ues/snap", snap_ue),
                     web.post("/zones/{id}/namespace", create_namespace), web.delete("/zones/{id}/namespace", delete_namespace),
                     web.post("/zones/{id}/emulation/start", start_emulation), web.post("/zones/{id}/emulation/stop", stop_emulation),
+                    web.put("/zones/{id}/emulation/settings", emulation_settings),
                     web.get("/namespaces/{ns}", by_namespace)])
     web.run_app(app, host=a.host, port=a.port, print=lambda *_: None)

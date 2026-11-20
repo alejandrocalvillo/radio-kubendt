@@ -419,10 +419,13 @@ class LiveRadio:
 
 
 class A3Manager:
-    """Event A3 (TS 38.331): neighbour better than serving by offset + hysteresis for time-to-trigger,."""
+    """Event A3 (TS 38.331): neighbour better than serving by offset + hysteresis for time-to-trigger, on
+    L3-filtered RSRP. Radio link failure: serving SINR below Qout for T310, then re-establishment. With access
+    settings (rach_lite.AccessConfig), handovers and re-establishments go through random access and a
+    successful handover costs its data gap; without them a handover is an instant switch."""
 
     def __init__(self, n, sectors, sector_site, dt, hysteresis_db=3.0, offset_db=0.0, ttt_s=0.48,
-                 filter_k=4, qout_db=-8.0, qin_db=-6.0, t310_s=1.0, reestablish_s=1.0):
+                 filter_k=4, qout_db=-8.0, qin_db=-6.0, t310_s=1.0, reestablish_s=1.0, access=None, link_config=None):
         self.n, self.dt = n, dt
         self.hys, self.off, self.ttt = hysteresis_db, offset_db, ttt_s
         self.alpha = 0.5 ** (filter_k / 4.0)
@@ -437,18 +440,32 @@ class A3Manager:
         self.prev = np.full(n, -1)
         self.since = np.full(n, 1e9)
         self.stats = dict(handovers=0, inter_site=0, intra_site=0, ping_pong=0, rlf=0, outage_steps=0)
+        self.frac = np.ones(n)
+        self.access = None
+        if access is not None:
+            from rach_lite import AccessConfig, AccessModel
+            self.access = AccessModel(AccessConfig.from_dict(access), link_config)
+            self.pending = np.zeros(n, bool)
+            self.gaps = []
+            self.stats.update(ho_attempts=0, ho_failures=0, hof_detection=0, hof_rar=0, hof_collision=0, hof_t304=0,
+                              hof_attempts=0, rach_attempts=0, rach_collisions=0, reestablishments=0,
+                              reestablish_failures=0, gap_ms_mean=None, gap_ms_p95=None)
 
     def start(self, rsrp):
         self.filt = rsrp.copy()
         self.serving = rsrp.argmax(1)
 
-    def step(self, rsrp, sinr_of):
-        """rsrp [n, sectors] in dBm; sinr_of(serving) -> SINR per UE. Returns (events, in_outage)."""
+    def step(self, rsrp, sinr_of, gain_db=None):
+        """rsrp [n, sectors] in dBm; sinr_of(serving) -> SINR per UE; gain_db [n, sectors], needed with access.
+        Returns (events, in_outage). self.frac is the share of the step each UE could use."""
         rsrp = np.maximum(rsrp, -160.0)
         self.filt = (1 - self.alpha) * self.filt + self.alpha * rsrp
         idx = np.arange(self.n)
         events = []
         self.since += self.dt
+        self.frac = np.ones(self.n)
+        if self.access is not None:
+            self._reestablish(gain_db, sinr_of, events)
         masked = self.filt.copy()
         masked[idx, self.serving] = -np.inf
         best = masked.argmax(1)
@@ -456,23 +473,91 @@ class A3Manager:
         same = entering & (best == self.cand)
         self.timer = np.where(same, self.timer + self.dt, np.where(entering, self.dt, 0.0))
         self.cand = np.where(entering, best, -1)
-        for i in np.flatnonzero(entering & (self.timer >= self.ttt - 1e-9) & (self.outage <= 0)):
-            self._switch(i, int(best[i]), events, "a3")
+        fire = np.flatnonzero(entering & (self.timer >= self.ttt - 1e-9) & (self.outage <= 0))
+        if self.access is None:
+            for i in fire:
+                self._switch(i, int(best[i]), events, "a3")
+        else:
+            self._handovers(fire, best, gain_db, sinr_of, events)
         sinr = sinr_of(self.serving)
         self.bad = np.where(sinr < self.qout, self.bad + self.dt, np.where(sinr > self.qin, 0.0, self.bad))
         for i in np.flatnonzero((self.bad >= self.t310 - 1e-9) & (self.outage <= 0)):
             self.outage[i] = self.reest
             self.bad[i] = 0.0
             self.stats["rlf"] += 1
+            if self.access is not None:
+                self.pending[i] = True
+                self.timer[i], self.cand[i] = 0.0, -1
+                events.append(dict(ue=int(i), kind="rlf", frm=int(self.serving[i]), to=int(self.serving[i])))
+                continue
             tgt = int(self.filt[i].argmax())
             if tgt != self.serving[i]:
                 self._switch(i, tgt, events, "rlf")
             else:
                 events.append(dict(ue=int(i), kind="rlf", frm=int(self.serving[i]), to=tgt))
         in_outage = self.outage > 0
+        self.frac[in_outage] = 0.0
         self.stats["outage_steps"] += int(in_outage.sum())
         self.outage = np.maximum(self.outage - self.dt, 0.0)
         return events, in_outage
+
+    def _dl_sinr(self, sinr_of, i, cell):
+        srv = self.serving.copy()
+        srv[i] = cell
+        return float(sinr_of(srv)[i])
+
+    def _use(self, i, gap_ms):
+        """A gap shorter than the step takes its share of the step; a longer one is an outage."""
+        if gap_ms / 1000.0 < self.dt:
+            self.frac[i] = min(self.frac[i], 1.0 - gap_ms / 1000.0 / self.dt)
+        else:
+            self.outage[i] = max(self.outage[i], gap_ms / 1000.0)
+
+    def _count(self, r):
+        self.stats["rach_attempts"] += r["attempts"]
+        self.stats["rach_collisions"] += r["collisions"]
+
+    def _handovers(self, fire, best, gain_db, sinr_of, events):
+        targets = [int(best[i]) for i in fire]
+        for i, to in zip(fire, targets):
+            r = self.access.access(float(gain_db[i, to]), self._dl_sinr(sinr_of, i, to), others=targets.count(to) - 1,
+                                   step_s=self.dt, handover=True)
+            self._count(r)
+            self.stats["ho_attempts"] += 1
+            if r["ok"]:
+                gap = self.access.handover_gap_ms(r["time_ms"])
+                self._switch(i, to, events, "a3")
+                events[-1].update(gap_ms=round(gap, 1), rach_attempts=r["attempts"])
+                self._use(i, gap)
+                self.gaps = (self.gaps + [gap])[-2000:]
+                self.stats["gap_ms_mean"] = round(float(np.mean(self.gaps)), 1)
+                self.stats["gap_ms_p95"] = round(float(np.percentile(self.gaps, 95)), 1)
+            else:
+                self.stats["ho_failures"] += 1
+                self.stats["hof_" + r["cause"]] += 1
+                self.outage[i] = r["time_ms"] / 1000.0 + self.reest
+                self.pending[i] = True
+                self.timer[i], self.cand[i] = 0.0, -1
+                events.append(dict(ue=int(i), kind="hof", frm=int(self.serving[i]), to=to, cause=r["cause"], inter_site=False))
+
+    def _reestablish(self, gain_db, sinr_of, events):
+        due = np.flatnonzero(self.pending & (self.outage <= 0))
+        targets = [int(self.filt[i].argmax()) for i in due]
+        for i, to in zip(due, targets):
+            r = self.access.access(float(gain_db[i, to]), self._dl_sinr(sinr_of, i, to), others=targets.count(to) - 1,
+                                   step_s=self.dt, handover=False)
+            self._count(r)
+            if not r["ok"]:
+                self.stats["reestablish_failures"] += 1
+                self.outage[i] = r["time_ms"] / 1000.0 + self.reest
+                continue
+            self.pending[i] = False
+            self.stats["reestablishments"] += 1
+            if to != self.serving[i]:
+                self._switch(i, to, events, "reest")
+            else:
+                events.append(dict(ue=int(i), kind="reest", frm=int(self.serving[i]), to=to, inter_site=False))
+            self._use(i, r["time_ms"])
 
     def _switch(self, i, to, events, kind):
         frm = int(self.serving[i])

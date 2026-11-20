@@ -1287,6 +1287,19 @@
   font-feature-settings: 'tnum';
 }
 
+.cluster-summary-sub {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.cluster-summary-gpu {
+  cursor: help;
+}
+
 .cluster-summary-divider {
   width: 1px;
   height: 22px;
