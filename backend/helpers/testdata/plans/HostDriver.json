@@ -13,11 +13,18 @@
   },
   "add_flow": { "unsupported": true },
   "add_interface_to_bridge": { "unsupported": true },
+  "add_multicast_group": { "unsupported": true },
   "add_qdisc": {
     "executor": "tc_universal",
     "commands": [
       ["tc","qdisc","replace","dev","eth1","root","noqueue"],
       ["tc","qdisc","replace","dev","eth1","root","netem","delay","50ms","5ms","loss","1%","rate","10mbit"]
+    ]
+  },
+  "add_static_neighbor": {
+    "executor": "kubectl",
+    "commands": [
+      ["ip","neigh","replace","10.0.1.254","lladdr","08:00:00:00:00:fe","dev","eth1","nud","permanent"]
     ]
   },
   "add_static_route": {
@@ -99,6 +106,7 @@
       ["ip","link","set","eth1","up"]
     ]
   },
+  "load_program": { "unsupported": true },
   "nat64_disable": { "unsupported": true },
   "nat64_enable": { "unsupported": true },
   "ospf6_add_interface": { "unsupported": true },
@@ -165,6 +173,13 @@
       ["sh","-c","! ip -o addr show dev eth1 | grep -qF ' 10.0.0.1/24 ' || ip addr del 10.0.0.1/24 dev eth1"]
     ]
   },
+  "remove_multicast_group": { "unsupported": true },
+  "remove_static_neighbor": {
+    "executor": "kubectl",
+    "commands": [
+      ["ip","neigh","del","10.0.1.254","dev","eth1"]
+    ]
+  },
   "remove_static_route": {
     "executor": "kubectl",
     "commands": [
@@ -212,11 +227,20 @@
       ["ip","addr","replace","10.0.0.1/24","dev","eth1"]
     ]
   },
+  "set_mac": {
+    "executor": "kubectl",
+    "commands": [
+      ["ip","link","set","eth1","address","08:00:00:00:01:11"]
+    ]
+  },
   "setup_bridge": { "unsupported": true },
   "stp_disable": { "unsupported": true },
   "stp_enable": { "unsupported": true },
   "stp_set_bridge_priority": { "unsupported": true },
   "stp_set_port": { "unsupported": true },
+  "table_add": { "unsupported": true },
+  "table_delete": { "unsupported": true },
+  "table_set_default": { "unsupported": true },
   "teardown_bridge": { "unsupported": true },
   "vlan_clear_port": { "unsupported": true },
   "vlan_set_access": { "unsupported": true },

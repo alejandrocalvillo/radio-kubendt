@@ -77,6 +77,9 @@ func ClearNamespaceTopologyResources(namespace string, deletePositions, deleteFi
 			return fmt.Errorf("error deleting StatefulSet %s: %w", sts.Name, err)
 		}
 	}
+	if err := SetNamespacePlacement(namespace, ""); err != nil {
+		log.Printf("⚠️ Could not drop the placement of namespace '%s': %v", namespace, err)
+	}
 
 	topologyList, err := kubeclient.DynamicClient.Resource(TopologyGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -109,9 +112,11 @@ func ClearNamespaceTopologyResources(namespace string, deletePositions, deleteFi
 		}
 	}
 
+	// The box on a clear takes the whole layout, annotations included: the
+	// namespace stays, so what is left would be shapes around nothing.
 	if deletePositions {
-		if err := DeletePositionsByNamespace(namespace); err != nil {
-			return fmt.Errorf("error deleting stored positions for namespace %s: %w", namespace, err)
+		if err := DeleteLayout(namespace); err != nil {
+			return fmt.Errorf("error deleting the layout of namespace %s: %w", namespace, err)
 		}
 	}
 

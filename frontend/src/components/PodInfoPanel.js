@@ -100,11 +100,8 @@ const PodInfoPanel = ({
   // The driver's capabilities, read once per driver: the config tab's
   // reference and grouping, the state tab's section titles, the links tab.
   const [driverCaps, setDriverCaps] = useState([]);
-  const [driverExecutor, setDriverExecutor] = useState('');
-  const [driverInterfaceConstraints, setDriverInterfaceConstraints] = useState(null);
   const [driverKnownImages, setDriverKnownImages] = useState([]);
   const [loadingDriverCaps, setLoadingDriverCaps] = useState(false);
-  const [errorDriverCaps, setErrorDriverCaps] = useState(null);
 
   // --- METRICS ---
   const [podMetrics, setPodMetrics] = useState(null); // null = loading, false = unavailable, object = data
@@ -243,25 +240,16 @@ const PodInfoPanel = ({
   const loadDriverCaps = async () => {
     if (!pod?.driver) {
       setDriverCaps([]);
-      setDriverExecutor('');
-      setDriverInterfaceConstraints(null);
       setDriverKnownImages([]);
-      setErrorDriverCaps(null);
       return;
     }
 
     setLoadingDriverCaps(true);
-    setErrorDriverCaps(null);
 
     try {
       const res = await fetch(`${API_BASE_URL}/drivers/${pod.driver}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setDriverExecutor(data?.executor || '');
-      // Backend omits this field when the driver imposes no extra rules
-      // beyond Linux kernel naming, so a null here is the normal case
-      // for hosts and generic switches.
-      setDriverInterfaceConstraints(data?.interfaceNameConstraints || null);
       setDriverKnownImages(Array.isArray(data?.knownImages) ? data.knownImages : []);
 
       const normalizedCaps = (data.capabilities || []).map((cap) => {
@@ -292,10 +280,7 @@ const PodInfoPanel = ({
     } catch (err) {
       console.error('❌ Error loading driver capabilities:', err);
       setDriverCaps([]);
-      setDriverExecutor('');
-      setDriverInterfaceConstraints(null);
       setDriverKnownImages([]);
-      setErrorDriverCaps('Error loading driver capabilities');
     } finally {
       setLoadingDriverCaps(false);
     }
@@ -474,7 +459,6 @@ const PodInfoPanel = ({
 
   useEffect(() => {
     setDriverCaps([]);
-    setErrorDriverCaps(null);
     setDriverHistory([]);
     setLoadingDriverHistory(false);
     setErrorDriverHistory(null);
@@ -601,48 +585,60 @@ const PodInfoPanel = ({
     <div className="panel-wrapper">
       {showInteractiveShell && <div className="panel-overlay" />}
       <div
-        className={`pod-info-panel${isClosing ? ' is-closing' : ''}`}
+        className={`pod-info-panel${activeTab === 'summary' ? ' pod-info-panel-fit' : ''}${isClosing ? ' is-closing' : ''}`}
         onAnimationEnd={handleAnimationEnd}
       >
-        <button
-          className="restart-btn"
-          onClick={handleRestart}
-          title={isBusy ? 'Operation in progress…' : 'Restart pod (Reboot)'}
-          disabled={restartElapsed !== null || isBusy}
-        >
-          {restartElapsed !== null ? (
-            <span className="restart-counter">{restartElapsed}s</span>
-          ) : (
-            <RefreshIcon className="app-icon" />
-          )}
-        </button>
-        {onOpenLogs && (
-          <button className="logs-btn" onClick={() => onOpenLogs(pod)} title="View the pod's log">
-            <LogsIcon className="app-icon" />
-          </button>
-        )}
-        {onDeletePod && (
-          <button
-            className="delete-btn"
-            onClick={() => onDeletePod(pod)}
-            title={isBusy ? 'Operation in progress…' : 'Delete pod (remove from topology)'}
-            disabled={isBusy}
-          >
-            <TrashIcon className="app-icon" />
-          </button>
-        )}
-        <button className="close-btn" onClick={requestClose} title="Close panel">
-          <CloseIcon className="app-icon" />
-        </button>
-
-        <h3>
-          {pod.type === 'host' && <img src={pcIcon} alt="Host" className="pod-type-icon" />}
-          {pod.type === 'router' && <img src={routerIcon} alt="Router" className="pod-type-icon" />}
-          {pod.type === 'switch' && <img src={switchIcon} alt="Switch" className="pod-type-icon" />}
-          {pod.type === 'ue' && <img src={ueIcon} alt="UE" className="pod-type-icon" />}
-          {pod.type === 'gnb' && <img src={gnbIcon} alt="gNB" className="pod-type-icon" />}
-          {displayName}
-        </h3>
+        <div className="pod-panel-head">
+          <h3 className="pod-panel-title" title={displayName}>
+            {pod.type === 'host' && <img src={pcIcon} alt="Host" className="pod-type-icon" />}
+            {pod.type === 'router' && (
+              <img src={routerIcon} alt="Router" className="pod-type-icon" />
+            )}
+            {pod.type === 'switch' && (
+              <img src={switchIcon} alt="Switch" className="pod-type-icon" />
+            )}
+            {pod.type === 'ue' && <img src={ueIcon} alt="UE" className="pod-type-icon" />}
+            {pod.type === 'gnb' && <img src={gnbIcon} alt="gNB" className="pod-type-icon" />}
+            <span className="pod-panel-name">{displayName}</span>
+          </h3>
+          <div className="pod-panel-actions">
+            {onDeletePod && (
+              <button
+                className="delete-btn"
+                onClick={() => onDeletePod(pod)}
+                title={isBusy ? 'Operation in progress…' : 'Delete pod (remove from topology)'}
+                disabled={isBusy}
+              >
+                <TrashIcon className="app-icon" />
+              </button>
+            )}
+            <button
+              className="restart-btn"
+              onClick={handleRestart}
+              title={isBusy ? 'Operation in progress…' : 'Restart pod (Reboot)'}
+              disabled={restartElapsed !== null || isBusy}
+            >
+              {restartElapsed !== null ? (
+                <span className="restart-counter">{restartElapsed}s</span>
+              ) : (
+                <RefreshIcon className="app-icon" />
+              )}
+            </button>
+            {onOpenLogs && (
+              <button
+                className="logs-btn"
+                onClick={() => onOpenLogs(pod)}
+                title="View the pod's log"
+              >
+                <LogsIcon className="app-icon" />
+              </button>
+            )}
+            <span className="pod-panel-sep" />
+            <button className="close-btn" onClick={requestClose} title="Close panel">
+              <CloseIcon className="app-icon" />
+            </button>
+          </div>
+        </div>
 
         <div className="pod-tabs">
           {TABS.map(([id, label, title]) => (
@@ -678,11 +674,7 @@ const PodInfoPanel = ({
             <ConfigTab
               driverDisplay={driverDisplay}
               driverCaps={driverCaps}
-              driverExecutor={driverExecutor}
-              driverInterfaceConstraints={driverInterfaceConstraints}
-              driverKnownImages={driverKnownImages}
-              loadingDriverCaps={loadingDriverCaps}
-              errorDriverCaps={errorDriverCaps}
+              driverName={pod.driver}
               driverHistory={driverHistory}
               loadingDriverHistory={loadingDriverHistory}
               errorDriverHistory={errorDriverHistory}

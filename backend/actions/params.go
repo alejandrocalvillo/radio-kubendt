@@ -32,6 +32,7 @@ const (
 	KindDomainList Kind = "domain_list" // DNS names, letters, digits, dots and hyphens
 	KindNumberList Kind = "number_list" // non-negative integers, the action checks their range
 	KindFile       Kind = "file"        // a file of the namespace's file manager, its content reaches the action in FileContent
+	KindMAC        Kind = "mac"         // a 48-bit MAC address
 )
 
 // Param is one field of ActionEntry an action reads, by its JSON name.
@@ -87,6 +88,9 @@ var (
 	AS            = Param{Name: "as", Kind: KindNumber, Required: true}
 	RemoteAS      = Param{Name: "remote_as", Kind: KindNumber, Required: true}
 	Neighbor      = Param{Name: "neighbor", Kind: KindIP, Required: true}
+	MAC           = Param{Name: "mac", Kind: KindMAC, Required: true}
+	Group         = Param{Name: "group", Kind: KindNumber, Required: true}
+	Ports         = Param{Name: "ports", Kind: KindNumberList, Required: true}
 	UpdateSource  = Param{Name: "update_source", Kind: KindText, Required: false}
 	Multihop      = Param{Name: "multihop", Kind: KindNumber, Required: false}
 	NET           = Param{Name: "net", Kind: KindText, Required: true}
@@ -103,6 +107,10 @@ var (
 	Flow          = Param{Name: "flow", Kind: KindText, Required: true}
 	ConfigFile    = Param{Name: "file", Kind: KindFile, Required: true}
 	DatapathID    = Param{Name: "datapath_id", Kind: KindText, Required: true}
+	Table         = Param{Name: "table", Kind: KindText, Required: true}
+	P4Action      = Param{Name: "action", Kind: KindText, Required: true}
+	Match         = Param{Name: "match", Kind: KindText, Required: true}
+	ActionParams  = Param{Name: "params", Kind: KindText, Required: false}
 )
 
 // ProtectedInterface is the pod's cluster interface. An action on it would
@@ -233,6 +241,10 @@ func checkKind(k Kind, v reflect.Value) error {
 			if n := v.Index(i).Int(); n < 0 {
 				return fmt.Errorf("must not hold negative numbers, got %d", n)
 			}
+		}
+	case KindMAC:
+		if hw, err := net.ParseMAC(v.String()); err != nil || len(hw) != 6 {
+			return fmt.Errorf("must be a MAC address, got %q", v.String())
 		}
 	case KindFile:
 		s := v.String()

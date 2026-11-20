@@ -734,7 +734,7 @@ const docTemplate = `{
         },
         "/drivers/{driver}": {
             "get": {
-                "description": "Returns the full info (type, executor, capabilities and interface-name constraints) for one registered driver. Same per-item shape used by ` + "`" + `GET /drivers/` + "`" + `.",
+                "description": "Returns the full info (type, executor, capabilities with their actions and inspections, interface-name constraints, images tried, tools, shells and deprecated aliases) for one registered driver. Same per-item shape used by ` + "`" + `GET /drivers/` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -1789,7 +1789,7 @@ const docTemplate = `{
         },
         "/network/clear-topology/{namespace}": {
             "delete": {
-                "description": "Deletes all topology resources in a namespace without deleting the namespace itself.",
+                "description": "Deletes all topology resources in a namespace without deleting the namespace itself. The graph's layout and the namespace files stay unless asked.",
                 "produces": [
                     "application/json"
                 ],
@@ -1804,6 +1804,18 @@ const docTemplate = `{
                         "name": "namespace",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also delete the graph's layout, positions and annotations.",
+                        "name": "deletePositions",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also delete the namespace files (file manager).",
+                        "name": "deleteFiles",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1895,7 +1907,7 @@ const docTemplate = `{
         },
         "/network/deploy-network/{namespace}": {
             "post": {
-                "description": "Deploys a full network topology (nodes + links) into a namespace. In links, use the reserved name \"external\" for either node or peerNode to create a host uplink (external network connection). Both ends of a link cannot be \"external\" simultaneously.",
+                "description": "Deploys a full network topology (nodes + links) into a namespace. In links, use the reserved name \"external\" for either node or peerNode to create a host uplink (external network connection). Both ends of a link cannot be \"external\" simultaneously. An optional layout (positions and annotations, what the export writes) is applied once the pods are up: what it brings replaces that part of the namespace's layout, what it leaves out stays. An optional placement, pack or spread, prefers one worker for the whole namespace or a different one per pod; it is kept on the namespace, a later modify follows it and get-network returns it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1921,7 +1933,7 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "description": "Topology definition",
+                        "description": "Topology definition, with an optional layout",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -2013,7 +2025,7 @@ const docTemplate = `{
         },
         "/network/get-network/{namespace}": {
             "get": {
-                "description": "Returns the current network topology deployed in a namespace.",
+                "description": "Returns the current network topology deployed in a namespace, as a file the deploy takes back.",
                 "produces": [
                     "application/json"
                 ],
@@ -2028,6 +2040,12 @@ const docTemplate = `{
                         "name": "namespace",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include the graph's layout (positions and annotations) so the file replicates the scenario with its picture.",
+                        "name": "layout",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2035,6 +2053,86 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.NetworkTopologyResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/network/layout/{namespace}": {
+            "get": {
+                "description": "The namespace's node positions and annotations, one document kept in the namespace as the ConfigMap kubendt-internal-layout.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Get the graph layout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Namespace name",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Layout"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Replaces the namespace's node positions and annotations with the document given.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Save the graph layout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Namespace name",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The whole layout",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.Layout"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
                         }
                     },
                     "500": {
@@ -2089,7 +2187,7 @@ const docTemplate = `{
         },
         "/network/modify-network/{namespace}": {
             "post": {
-                "description": "Adds or removes nodes/links from an existing topology. Any change (add, delete or scale) returns 412 when the Meshnet CNI is not detected, since it restarts or creates pods that need rewiring. Bypass with force=true. Only clearing a topology is exempt.",
+                "description": "Adds or removes nodes, links and graph annotations in an existing topology, and places nodes with positions merged per pod. Any change (add, delete or scale) returns 412 when the Meshnet CNI is not detected, since it restarts or creates pods that need rewiring. Bypass with force=true. Only clearing a topology is exempt.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2191,9 +2289,12 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Node name to {x, y}, the map itself",
                         "schema": {
-                            "$ref": "#/definitions/types.NodePositionsResponse"
+                            "type": "object",
+                            "additionalProperties": {
+                                "$ref": "#/definitions/types.NodePosition"
+                            }
                         }
                     },
                     "500": {
@@ -2225,21 +2326,21 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Map of node name to {x, y} position",
+                        "description": "Node name to {x, y}, the map itself as the body",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.NodePositionsRequest"
+                            "type": "object",
+                            "additionalProperties": {
+                                "$ref": "#/definitions/types.NodePosition"
+                            }
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.MessageResponse"
-                        }
+                    "204": {
+                        "description": "No Content"
                     },
                     "400": {
                         "description": "Bad Request",
@@ -2946,13 +3047,17 @@ const docTemplate = `{
         "types.ActionEntry": {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "MyIngress.ipv4_forward"
+                },
                 "area_type": {
                     "description": "OSPF areas and authentication. AreaType is stub, totally-stub, nssa or\ntotally-nssa (the Cisco names; FRR says stub no-summary). AuthType is\nplain (a key of up to 8 characters) or md5 (up to 16, with a key id).",
                     "type": "string",
                     "example": "stub"
                 },
                 "as": {
-                    "description": "BGP: the local AS of bgp_set_router, a neighbour by address with its\nAS, the interface or address the session binds to, and the TTL an\neBGP session may cross.",
+                    "description": "BGP: the local AS of bgp_set_router, a neighbour by address with its\nAS, the interface or address the session binds to, and the TTL an\neBGP session may cross. Neighbor is also a static neighbour's address.",
                     "type": "integer",
                     "example": 65001
                 },
@@ -3055,6 +3160,11 @@ const docTemplate = `{
                     "type": "string",
                     "example": "192.168.1.254"
                 },
+                "group": {
+                    "description": "Group and Ports are a P4 multicast group and the ports it copies to.",
+                    "type": "integer",
+                    "example": 1
+                },
                 "hello_interval": {
                     "type": "integer",
                     "example": 10
@@ -3080,6 +3190,15 @@ const docTemplate = `{
                 "level": {
                     "type": "string",
                     "example": "level-2"
+                },
+                "mac": {
+                    "description": "MAC is the address set_mac gives an interface, or the one a static\nneighbor (add_static_neighbor, keyed by iface and neighbor) resolves to.",
+                    "type": "string",
+                    "example": "02:00:00:00:01:01"
+                },
+                "match": {
+                    "type": "string",
+                    "example": "10.0.2.2/32"
                 },
                 "mode": {
                     "type": "string",
@@ -3114,9 +3233,19 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
+                "params": {
+                    "type": "string",
+                    "example": "08:00:00:00:02:22 2"
+                },
                 "pool": {
                     "type": "string",
                     "example": "172.22.19.0/24"
+                },
+                "ports": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "prefix": {
                     "description": "NAT64: the IPv6 prefix that stands for the IPv4 internet (the well\nknown 64:ff9b::/96 by default) and the IPv4 pool the translator maps\nthe IPv6 hosts onto.",
@@ -3147,6 +3276,11 @@ const docTemplate = `{
                 "router_id": {
                     "type": "string",
                     "example": "10.0.255.1"
+                },
+                "table": {
+                    "description": "P4: a table, one of its actions, the match fields and the action's\nparameters as simple_switch_CLI takes them, values separated by spaces.",
+                    "type": "string",
+                    "example": "MyIngress.ipv4_lpm"
                 },
                 "tcparams": {
                     "description": "TC / Qdisc",
@@ -3191,6 +3325,67 @@ const docTemplate = `{
                     "description": "PersistHistory controls whether the action is persisted in driver history.",
                     "type": "boolean",
                     "example": false
+                }
+            }
+        },
+        "types.Annotation": {
+            "type": "object",
+            "properties": {
+                "border": {
+                    "type": "string",
+                    "example": "dashed"
+                },
+                "color": {
+                    "type": "string",
+                    "example": "blue"
+                },
+                "fill": {
+                    "description": "The fill: none, glass (the default) or solid.",
+                    "type": "string",
+                    "example": "solid"
+                },
+                "height": {
+                    "type": "number",
+                    "example": 200
+                },
+                "id": {
+                    "type": "string",
+                    "example": "a1"
+                },
+                "locked": {
+                    "type": "boolean"
+                },
+                "text": {
+                    "type": "string",
+                    "example": "Site A"
+                },
+                "text_anchor": {
+                    "description": "Where the text sits in the shape: a corner, a side or the centre.",
+                    "type": "string",
+                    "example": "center"
+                },
+                "text_size": {
+                    "type": "string",
+                    "example": "md"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "rect"
+                },
+                "width": {
+                    "type": "number",
+                    "example": 320
+                },
+                "x": {
+                    "type": "number",
+                    "example": 40
+                },
+                "y": {
+                    "type": "number",
+                    "example": 60
+                },
+                "z": {
+                    "type": "integer"
                 }
             }
         },
@@ -3662,6 +3857,9 @@ const docTemplate = `{
         "types.DeployRequest": {
             "type": "object",
             "properties": {
+                "layout": {
+                    "$ref": "#/definitions/types.Layout"
+                },
                 "links": {
                     "type": "array",
                     "items": {
@@ -3673,6 +3871,11 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.NodeSpec"
                     }
+                },
+                "placement": {
+                    "description": "How the pods spread over the workers: \"pack\" prefers one worker for\nthe whole namespace (every link a veth, no VXLAN), \"spread\" a different\nworker per pod, empty leaves it to the scheduler or to\nKUBENDT_PLACEMENT. A node's own nodeName and nodeSelector still win.",
+                    "type": "string",
+                    "example": "pack"
                 }
             }
         },
@@ -3711,6 +3914,15 @@ const docTemplate = `{
         "types.DriverInfo": {
             "type": "object",
             "properties": {
+                "aliases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "BasicHostDriver"
+                    ]
+                },
                 "capabilities": {
                     "type": "array",
                     "items": {
@@ -3728,9 +3940,24 @@ const docTemplate = `{
                     "type": "boolean",
                     "example": true
                 },
+                "knownImages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "quay.io/frrouting/frr:10.7.1"
+                    ]
+                },
                 "name": {
                     "type": "string",
                     "example": "frr-router"
+                },
+                "shells": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DriverShellEntry"
+                    }
                 },
                 "tools": {
                     "type": "array",
@@ -3751,6 +3978,9 @@ const docTemplate = `{
         "types.DriverMethodEntry": {
             "type": "object",
             "properties": {
+                "example": {
+                    "$ref": "#/definitions/types.DriverMethodExampleEntry"
+                },
                 "label": {
                     "type": "string",
                     "example": "Bring interface up"
@@ -3764,6 +3994,24 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.DriverMethodParamEntry"
                     }
+                }
+            }
+        },
+        "types.DriverMethodExampleEntry": {
+            "type": "object",
+            "properties": {
+                "commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "ip link set eth1 up"
+                    ]
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },
@@ -3835,6 +4083,19 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 3
+                }
+            }
+        },
+        "types.DriverShellEntry": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "example": "vtysh console"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "vtysh"
                 }
             }
         },
@@ -4214,6 +4475,23 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "example": "/home/user/.kube/config"
+                }
+            }
+        },
+        "types.Layout": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Annotation"
+                    }
+                },
+                "positions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.NodePosition"
+                    }
                 }
             }
         },
@@ -5012,9 +5290,39 @@ const docTemplate = `{
                 }
             }
         },
+        "types.NetworkAddSpecDoc": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Annotation"
+                    }
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.LinkSpec"
+                    }
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.NodeSpec"
+                    }
+                }
+            }
+        },
         "types.NetworkDeleteSpecDoc": {
             "type": "object",
             "properties": {
+                "annotations": {
+                    "description": "Ids of annotations to remove from the graph.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "links": {
                     "type": "array",
                     "items": {
@@ -5033,10 +5341,17 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "add": {
-                    "$ref": "#/definitions/types.DeployRequest"
+                    "$ref": "#/definitions/types.NetworkAddSpecDoc"
                 },
                 "delete": {
                     "$ref": "#/definitions/types.NetworkDeleteSpecDoc"
+                },
+                "positions": {
+                    "description": "Positions merged per pod, how a new node gets its spot on the graph.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.NodePosition"
+                    }
                 },
                 "scale": {
                     "description": "Scale changes the replica count of existing nodes. Each entry takes\nthe absolute number of replicas the node should end with. Replicas\nmust be \u003e= 1 (to remove a node entirely use delete.nodes).",
@@ -5050,6 +5365,14 @@ const docTemplate = `{
         "types.NetworkTopologyResponse": {
             "type": "object",
             "properties": {
+                "layout": {
+                    "description": "The graph's layout, with ?layout=true and when there is one.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Layout"
+                        }
+                    ]
+                },
                 "links": {
                     "type": "array",
                     "items": {
@@ -5061,6 +5384,11 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.NodeSpec"
                     }
+                },
+                "placement": {
+                    "description": "The placement the namespace was deployed with, when any.",
+                    "type": "string",
+                    "example": "pack"
                 }
             }
         },
@@ -5234,28 +5562,6 @@ const docTemplate = `{
                 "y": {
                     "type": "number",
                     "example": 340
-                }
-            }
-        },
-        "types.NodePositionsRequest": {
-            "type": "object",
-            "properties": {
-                "positions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/types.NodePosition"
-                    }
-                }
-            }
-        },
-        "types.NodePositionsResponse": {
-            "type": "object",
-            "properties": {
-                "positions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/types.NodePosition"
-                    }
                 }
             }
         },

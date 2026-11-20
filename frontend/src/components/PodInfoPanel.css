@@ -1,14 +1,18 @@
 /* === PANEL PRINCIPAL === */
 .pod-info-panel {
   position: fixed;
-  top: 50%;
+  /* Where the panel used to start when it was centred, so the tabs stay put
+     while a card ends where its content ends. */
+  top: 21vh;
   left: 0;
-  transform: translateY(-50%);
   z-index: 10;
 
   width: 18vw;
   min-width: 288px;
-  height: 58vh;
+  /* Room for the summary card, but it stops short of the strips in the
+     bottom corner (166px tall, 15px off the edge), which never move. */
+  --pod-panel-height: min(max(58vh, 560px), 79vh - 200px);
+  height: var(--pod-panel-height);
 
   padding: 0;
   background: var(--panel-from);
@@ -28,11 +32,11 @@
 
 @keyframes pod-panel-slide-in {
   from {
-    transform: translate(-110%, -50%);
+    transform: translateX(-110%);
     opacity: 0;
   }
   to {
-    transform: translate(0, -50%);
+    transform: translateX(0);
     opacity: 1;
   }
 }
@@ -44,44 +48,79 @@
 
 @keyframes pod-panel-slide-out {
   from {
-    transform: translate(0, -50%);
+    transform: translateX(0);
     opacity: 1;
   }
   to {
-    transform: translate(-110%, -50%);
+    transform: translateX(-110%);
     opacity: 0;
   }
 }
 
+/* The summary and the external card: the panel ends with its content and
+   scrolls only past the height the other tabs use. */
+.pod-info-panel-fit {
+  height: auto;
+  max-height: var(--pod-panel-height);
+}
+
+.pod-info-panel-fit .pod-body {
+  overflow-y: auto;
+}
+
 /* Scrollbar moderno */
-.pod-info-panel::-webkit-scrollbar {
+.pod-body::-webkit-scrollbar {
   width: 8px;
 }
 
-.pod-info-panel::-webkit-scrollbar-thumb {
+.pod-body::-webkit-scrollbar-thumb {
   background-color: #bbb;
   border-radius: var(--radius-sm);
 }
 
-.pod-info-panel::-webkit-scrollbar-thumb:hover {
+.pod-body::-webkit-scrollbar-thumb:hover {
   background-color: var(--text-subtle);
 }
 
-/* === CABECERA === */
-.pod-info-panel h3 {
+/* === HEADER === */
+.pod-panel-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin: 0;
-  font-size: 1.2rem;
-  color: var(--text-heading);
-  background: linear-gradient(to bottom, var(--panel-header-from), var(--panel-header-to));
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
   border-bottom: 1px solid var(--border);
-  /* Extra horizontal room so the title never runs under the delete/close
-     buttons sitting in the top corners. */
-  padding: 1rem 2.6rem;
+}
+
+.pod-panel-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1.05rem;
   font-weight: 700;
+  color: var(--text-heading);
+}
+
+.pod-panel-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pod-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.pod-panel-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
 }
 
 /* === LÍNEAS DE INFO === */
@@ -105,6 +144,21 @@
   min-width: 0;
   color: var(--text-body);
   overflow-wrap: break-word;
+}
+
+/* The fold of a long value, written into the line. */
+.pod-value-more {
+  margin-left: 0.35em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pod-value-more:hover {
+  text-decoration: underline;
 }
 
 /* Subtle group divider inside the panel body (replaces the default black <hr>). */
@@ -201,115 +255,51 @@
   font-weight: bold;
 }
 
-/* === BOTONES SUPERIORES === */
-.restart-btn {
-  position: absolute;
-  top: 12px;
-  left: 48px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 6px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-  font-size: 1.1rem;
-  color: var(--text-muted);
-  z-index: 10;
-}
-
-.restart-btn:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-  color: var(--text-body);
-}
-
-/* Logs button: third top-left action, after delete and restart */
-.logs-btn {
-  position: absolute;
-  top: 12px;
-  left: 84px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 6px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-  font-size: 1.1rem;
-  color: var(--text-muted);
-  z-index: 10;
-}
-
-.logs-btn:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-  color: var(--text-body);
-}
-
-/* Delete button: destructive top-left action */
-.delete-btn {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 6px;
-  cursor: pointer;
-  transition:
-    background 0.2s ease,
-    transform 0.05s ease;
-  font-size: 1.1rem;
-  color: var(--danger-strong);
-  z-index: 10;
-}
-
-.delete-btn:hover {
-  background-color: rgba(198, 40, 40, 0.18);
-  color: var(--danger-strong);
-}
-
-.delete-btn:active {
-  transform: scale(0.96);
-}
-
-.delete-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  color: var(--text-subtle);
-}
-
-.delete-btn:disabled:hover {
-  background-color: transparent;
-  color: var(--text-subtle);
-}
-
-.restart-btn:disabled:not(:has(.restart-counter)) {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Close button: top-right */
+/* The header's icon buttons: quiet, the bin red only under the cursor. */
+.restart-btn,
+.logs-btn,
+.delete-btn,
 .close-btn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  background: transparent;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-sm);
-  padding: 4px 6px;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
   transition:
-    background 0.2s ease,
-    transform 0.05s ease;
-  font-size: 1.2rem;
-  color: var(--text-muted);
-  font-weight: 400;
-  z-index: 10;
+    background 0.15s ease,
+    color 0.15s ease;
 }
+
+.restart-btn:hover:not(:disabled),
+.logs-btn:hover,
 .close-btn:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-  color: var(--text-body);
+  background: var(--panel-header-from);
+  color: var(--text-heading);
 }
-.close-btn:active {
-  transform: scale(0.96);
+
+.delete-btn:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.restart-btn:disabled,
+.delete-btn:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+}
+
+.restart-btn .app-icon,
+.logs-btn .app-icon,
+.delete-btn .app-icon,
+.close-btn .app-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .panel-wrapper {
@@ -330,34 +320,32 @@
 /* === PESTAÑAS === */
 .pod-tabs {
   display: flex;
-  justify-content: space-around;
-  border-bottom: 2px solid var(--border);
-  background: linear-gradient(to bottom, #dce4ee, var(--border-light));
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .pod-tab {
   flex: 1;
+  padding: 0.55rem 0;
+  margin-bottom: -1px;
   text-align: center;
-  padding: 0.7rem 0;
-  cursor: pointer;
+  font-size: 0.85rem;
   font-weight: 600;
-  font-size: 0.9rem;
   color: var(--text-muted);
-  transition: all 0.2s;
-  border-bottom: 3px solid transparent;
-  position: relative;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .pod-tab:hover {
-  background: rgba(25, 118, 210, 0.08);
-  color: var(--primary);
+  color: var(--text-heading);
 }
 
 .pod-tab.active {
-  background: var(--panel-from);
   color: var(--primary);
-  border-bottom: 3px solid var(--primary);
-  font-weight: 700;
+  border-bottom-color: var(--primary);
 }
 
 .pod-body {
@@ -372,95 +360,6 @@
   font-size: 1rem;
   color: var(--text-subtle);
   padding: 1rem 0;
-}
-
-/* === ZONA INFERIOR DE ACCIONES === */
-.pod-actions {
-  position: absolute;
-  bottom: 5%;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 1.2rem;
-  padding: 0.8rem;
-}
-
-/* Botones de acción unified style */
-.pod-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border: none;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.3s ease;
-  background: linear-gradient(135deg, #f5f7fa 0%, var(--panel-from) 100%);
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
-  font-size: 1.4rem;
-  padding: 0;
-}
-
-.pod-action-btn:hover {
-  background: linear-gradient(135deg, #e3eaf3 0%, #d8e2ee 100%);
-  box-shadow: 0 4px 16px rgba(25, 118, 210, 0.25);
-  transform: translateY(-2px);
-}
-
-.pod-action-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
-}
-
-/* Shell button with icon */
-.pod-action-btn.shell-btn .pod-action-icon {
-  width: 32px;
-  height: 32px;
-  display: block;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
-}
-
-.pod-action-btn.shell-btn:hover .pod-action-icon {
-  filter: drop-shadow(0 2px 6px rgba(25, 118, 210, 0.4));
-}
-
-.pod-action-btn.serial-btn {
-  background: linear-gradient(135deg, #f1f3f6 0%, #d8e0ea 100%);
-  color: #0d3b66;
-}
-
-.pod-action-btn.serial-btn:hover {
-  background: linear-gradient(135deg, #e4ebf3 0%, #ccd7e4 100%);
-  box-shadow: 0 4px 16px rgba(13, 59, 102, 0.25);
-}
-
-.pod-action-btn.serial-btn .pod-action-icon,
-.pod-action-btn.vtysh-btn .pod-action-icon {
-  width: 32px;
-  height: 32px;
-  display: block;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
-}
-
-/* FRR button with icon */
-.pod-action-btn.frr-btn {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
-  color: white;
-}
-
-.pod-action-btn.frr-btn:hover {
-  background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-hover) 100%);
-  box-shadow: 0 4px 16px rgba(25, 118, 210, 0.4);
-}
-
-.pod-action-btn.frr-btn .frr-icon {
-  font-size: 1.6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 /* === LINKS TAB === */
@@ -608,14 +507,6 @@
   font-size: 0.85rem;
 }
 
-.cap-code {
-  background: var(--info-bg);
-  padding: 0.05rem 0.3rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  color: var(--text-heading);
-}
-
 /* Section headers inside the capability / interface detail card. */
 .details-scroll h5 {
   margin: 0.75rem 0 0.3rem;
@@ -694,24 +585,9 @@
   font-size: 0.85rem;
 }
 
-.pod-title {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin: 0;
-  font-size: 1.2rem;
-  background: linear-gradient(to bottom, var(--panel-header-from), var(--panel-header-to));
-  border-bottom: 1px solid var(--border);
-  padding: 1rem;
-  font-weight: 700;
-  color: var(--text-heading);
-}
-
 .pod-type-icon {
-  width: 24px;
-  height: 24px;
-  filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.2));
+  width: 22px;
+  height: 22px;
 }
 
 /* DRIVER TAB (reuses Links styles) */
@@ -743,7 +619,7 @@
 }
 
 .pod-vars-header {
-  background: linear-gradient(to bottom, var(--panel-header-from), var(--panel-header-to));
+  background: var(--panel-from);
   border-bottom: 1px solid var(--border);
   padding: 0.5rem 0.7rem;
   font-weight: 700;
@@ -859,133 +735,11 @@
 }
 
 /* Lista de métodos bonica */
-.cap-methods-list {
-  margin: 0.25rem 0 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.cap-methods-list li,
-.method-item {
-  position: relative;
-  display: flex !important;
-  align-items: baseline;
-  gap: 0.4rem;
-  font-size: 0.85rem;
-}
-
-.method-code {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  cursor: pointer;
-  background: var(--info-bg);
-  color: var(--primary);
-  border-radius: var(--radius-pill);
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 0.78rem;
-  font-weight: 600;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.method-code:hover {
-  background: var(--primary);
-  color: var(--text-on-brand);
-}
-
-.method-signature {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.method-popover {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 0;
-  min-width: 240px;
-  max-width: 280px;
-  animation: popoverFadeIn 0.2s ease-out;
-  white-space: normal;
-  overflow: visible;
-}
-
-@keyframes popoverFadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.popover-content {
-  padding: 8px 12px;
-}
-
-.popover-header {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--primary);
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--border-light);
-  padding-bottom: 6px;
-}
-
-.popover-params {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
-.params-label {
-  font-weight: 600;
-  color: var(--text-body);
-  margin-bottom: 4px;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-}
-
-.param-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0;
-  padding: 4px 4px;
-  background: #f5f5f5;
-  border-radius: 3px;
-}
-
-.param-name {
-  font-weight: 600;
-  color: var(--primary);
-  font-family: monospace;
-}
-
-.param-type {
-  font-size: 0.75rem;
-  color: var(--text-subtle);
-  background: #efefef;
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-family: monospace;
-}
-
-.cap-desc {
-  color: var(--text-muted);
-  margin-top: 0.2rem;
-  margin-bottom: 0.6rem;
-}
-
 .driver-header {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: linear-gradient(to bottom, #dce4ee, var(--border-light));
+  background: var(--panel-from);
   padding: 0.6rem;
   border-bottom: 1px solid var(--border);
   text-align: center;
@@ -1004,20 +758,32 @@
   gap: 0.5rem;
 }
 
-.driver-nav-btn {
-  border: 1px solid #b8c7db;
-  background: #f7f9fc;
-  color: var(--text-heading);
-  border-radius: var(--radius-sm);
-  font-size: 0.9rem;
-  line-height: 1;
+/* The toolbars' icon buttons, the same quiet squares as the header's. */
+.driver-nav-btn,
+.driver-history-clear-pod-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1;
   cursor: pointer;
 }
 
-.driver-nav-btn:hover {
-  background: #eef3f9;
+.driver-nav-btn:hover:not(:disabled) {
+  background: var(--panel-header-from);
+  color: var(--text-heading);
+}
+
+.driver-nav-btn:disabled {
+  color: var(--text-subtle);
+  cursor: default;
 }
 
 .driver-history-panel {
@@ -1030,25 +796,14 @@
   gap: 0.5rem;
 }
 
-.driver-history-clear-pod-btn {
-  border: 1px solid #e2b9b9;
-  background: #fff6f6;
-  color: #8a2d2d;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  line-height: 1;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-}
-
 .driver-history-clear-pod-btn:hover:not(:disabled) {
-  background: #fde8e8;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .driver-history-clear-pod-btn:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
+  color: var(--text-subtle);
+  cursor: default;
 }
 
 .driver-history-list {
@@ -1154,7 +909,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.65rem 0.8rem;
-  background: linear-gradient(to bottom, var(--panel-header-from), var(--panel-header-to));
+  background: var(--panel-from);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1264,129 +1019,40 @@
   background: #e3edf8;
 }
 
-/* Metrics block in summary */
-.pod-metrics-hint {
-  text-align: right;
-  font-size: 0.62rem;
-  color: #b0bac8;
-  margin: 0 1rem 0.2rem 1rem;
-  font-style: italic;
-}
-
-.pod-metrics-block {
+/* The usage line of the summary, the values with their unit muted. */
+.pod-metrics {
   display: flex;
-  gap: 0;
-  margin: 0.35rem 1rem 0.1rem 1rem;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  /* NO overflow:hidden, needed so tooltip can escape the block */
-  background: #fff;
-}
-
-.pod-metrics-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0.45rem 0.5rem;
-  gap: 0.15rem;
-  position: relative;
-  /* clip item backgrounds to rounded corners individually */
-}
-
-.pod-metrics-item:first-child {
-  border-right: 1px solid var(--border-light);
-  border-radius: 8px 0 0 8px;
-}
-
-.pod-metrics-item:last-child {
-  border-radius: 0 8px 8px 0;
-}
-
-.pod-metrics-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--text-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  flex-wrap: wrap;
+  gap: 0 0.9rem;
 }
 
 .pod-metrics-value {
-  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-heading);
+  white-space: nowrap;
 }
 
 .pod-metrics-value em {
   font-style: normal;
-  font-size: 0.72rem;
-  color: var(--text-subtle);
+  font-size: 0.78rem;
   font-weight: 400;
+  color: var(--text-subtle);
 }
 
-.pod-metrics-loading {
-  color: #bbb;
-  font-weight: 400;
+.pod-metrics-loading,
+.pod-metrics-na {
+  color: var(--text-subtle);
 }
 
 .pod-metrics-na {
-  color: #bbb;
   cursor: help;
-  position: relative;
-}
-
-.pod-metrics-tooltip {
-  display: none;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 170px;
-  white-space: normal;
-  background: #f0f4f9;
-  color: var(--text-heading);
-  border: 1px solid var(--border);
-  font-size: 0.72rem;
-  font-weight: 400;
-  padding: 0.45rem 0.6rem;
-  border-radius: var(--radius-sm);
-  z-index: 9999;
-  pointer-events: none;
-  line-height: 1.55;
-  text-align: center;
-  box-shadow: 0 3px 12px rgba(25, 118, 210, 0.13);
-}
-
-.pod-metrics-tooltip::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: var(--border);
-}
-
-.pod-metrics-tooltip::before {
-  content: '';
-  position: absolute;
-  top: calc(100% + 1px);
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: #f0f4f9;
-  z-index: 1;
-}
-
-.pod-metrics-na:hover .pod-metrics-tooltip {
-  display: block;
 }
 
 /* Restart counter inside restart-btn */
 .restart-counter {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #e67e22;
+  color: var(--warning-strong);
   font-family: monospace;
 }
 
@@ -1486,23 +1152,25 @@
   padding: 0.05rem 0.45rem;
 }
 .state-refresh-btn {
-  border: 1px solid #b8c7db;
-  background: #f7f9fc;
-  color: var(--text-heading);
-  border-radius: var(--radius-sm);
-  width: 22px;
-  height: 22px;
-  line-height: 1;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  line-height: 1;
+  cursor: pointer;
 }
 .state-refresh-btn:hover:not(:disabled) {
-  background: #eef3f9;
+  background: var(--panel-header-from);
+  color: var(--text-heading);
 }
 .state-refresh-btn:disabled {
-  opacity: 0.6;
+  color: var(--text-subtle);
   cursor: default;
 }
 .state-section-body {
@@ -1565,93 +1233,28 @@
 .config-group-label {
   flex: 1;
 }
-.config-reference {
-  margin-top: 0.4rem;
-  border-top: 1px solid var(--border-light);
-  padding-top: 0.4rem;
-}
-.config-reference-toggle {
-  display: flex;
+/* The link to the driver's page, under the history. */
+.config-reference-link {
+  display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  cursor: pointer;
-  user-select: none;
-  font-size: 0.82rem;
+  gap: 7px;
+  margin: 0.6rem 0.8rem 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.85rem;
   font-weight: 600;
-  color: var(--text-muted);
-}
-.config-reference-toggle:hover {
-  color: var(--primary);
-}
-.config-reference-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding-top: 0.45rem;
-  font-size: 0.82rem;
-}
-.config-reference-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.config-reference-image + .config-reference-image {
-  margin-left: 0.3rem;
-}
-.config-reference-caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-.config-cap-chip {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-heading);
-  border-radius: 999px;
-  padding: 0.15rem 0.55rem;
-  font-size: 0.76rem;
   cursor: pointer;
-}
-.config-cap-chip:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.config-cap-chip.active {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--text-on-brand);
-}
-/* The universal ones (tc, custom) run on any node outside the driver: a
-   row of their own, dashed and muted, so they do not read as the driver's. */
-.config-reference-universal {
-  align-items: center;
-}
-.config-reference-universal-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-subtle);
-}
-.config-cap-chip.universal {
-  border-style: dashed;
-  color: var(--text-muted);
-}
-.config-cap-chip.universal.active {
-  background: var(--text-muted);
-  border-color: var(--text-muted);
-  border-style: solid;
-  color: var(--text-on-brand);
-}
-.config-reference-detail {
-  background: var(--surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 0.5rem 0.6rem;
 }
 
-/* The clear of one capability's operations: text, so it does not read as
-   one more trash icon next to the rows'. */
+.config-reference-link:hover {
+  background: var(--panel-header-from);
+  color: var(--text-heading);
+}
+
 .config-group-clear {
   border: none;
   background: none;

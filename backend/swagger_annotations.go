@@ -236,13 +236,13 @@ func swaggerGetNamespaceMetrics() {}
 // swaggerDeployNetwork godoc
 //
 //	@Summary      Deploy network topology
-//	@Description  Deploys a full network topology (nodes + links) into a namespace. In links, use the reserved name "external" for either node or peerNode to create a host uplink (external network connection). Both ends of a link cannot be "external" simultaneously.
+//	@Description  Deploys a full network topology (nodes + links) into a namespace. In links, use the reserved name "external" for either node or peerNode to create a host uplink (external network connection). Both ends of a link cannot be "external" simultaneously. An optional layout (positions and annotations, what the export writes) is applied once the pods are up: what it brings replaces that part of the namespace's layout, what it leaves out stays. An optional placement, pack or spread, prefers one worker for the whole namespace or a different one per pod; it is kept on the namespace, a later modify follows it and get-network returns it.
 //	@Tags         network
 //	@Accept       json
 //	@Produce      json
 //	@Param        namespace  path      string                true   "Namespace name"
 //	@Param        force      query     bool                  false  "Deploy even if the Meshnet CNI is not detected. Without it a missing Meshnet returns 412 and nothing is deployed."
-//	@Param        body       body      types.DeployRequest   true   "Topology definition"
+//	@Param        body       body      types.DeployRequest   true   "Topology definition, with an optional layout"
 //	@Success      200        {object}  types.DeployNetworkResponse
 //	@Failure      400        {object}  types.ErrorResponse
 //	@Failure      403        {object}  types.ErrorResponse
@@ -256,10 +256,12 @@ func swaggerDeployNetwork() {}
 // swaggerClearTopology godoc
 //
 //	@Summary      Clear namespace topology
-//	@Description  Deletes all topology resources in a namespace without deleting the namespace itself.
+//	@Description  Deletes all topology resources in a namespace without deleting the namespace itself. The graph's layout and the namespace files stay unless asked.
 //	@Tags         network
 //	@Produce      json
-//	@Param        namespace  path      string  true  "Namespace name"
+//	@Param        namespace        path   string  true   "Namespace name"
+//	@Param        deletePositions  query  bool    false  "Also delete the graph's layout, positions and annotations."
+//	@Param        deleteFiles      query  bool    false  "Also delete the namespace files (file manager)."
 //	@Success      200        {object}  types.ClearTopologyResponse
 //	@Failure      403        {object}  types.ErrorResponse
 //	@Failure      404        {object}  types.ErrorResponse
@@ -271,7 +273,7 @@ func swaggerClearTopology() {}
 // swaggerModifyNetwork godoc
 //
 //	@Summary      Modify network topology
-//	@Description  Adds or removes nodes/links from an existing topology. Any change (add, delete or scale) returns 412 when the Meshnet CNI is not detected, since it restarts or creates pods that need rewiring. Bypass with force=true. Only clearing a topology is exempt.
+//	@Description  Adds or removes nodes, links and graph annotations in an existing topology, and places nodes with positions merged per pod. Any change (add, delete or scale) returns 412 when the Meshnet CNI is not detected, since it restarts or creates pods that need rewiring. Bypass with force=true. Only clearing a topology is exempt.
 //	@Tags         network
 //	@Accept       json
 //	@Produce      json
@@ -304,10 +306,11 @@ func swaggerGetLinks() {}
 // swaggerGetNetwork godoc
 //
 //	@Summary      Get network topology
-//	@Description  Returns the current network topology deployed in a namespace.
+//	@Description  Returns the current network topology deployed in a namespace, as a file the deploy takes back.
 //	@Tags         network
 //	@Produce      json
-//	@Param        namespace  path      string  true  "Namespace name"
+//	@Param        namespace  path      string  true   "Namespace name"
+//	@Param        layout     query     bool    false  "Include the graph's layout (positions and annotations) so the file replicates the scenario with its picture."
 //	@Success      200        {object}  types.NetworkTopologyResponse
 //	@Failure      500        {object}  types.ErrorResponse
 //	@Router       /network/get-network/{namespace} [get]
@@ -321,12 +324,38 @@ func swaggerGetNetwork() {}
 //	@Accept       json
 //	@Produce      json
 //	@Param        namespace  path      string                    true  "Namespace name"
-//	@Param        body       body      types.NodePositionsRequest  true  "Map of node name to {x, y} position"
-//	@Success      200        {object}  types.MessageResponse
+//	@Param        body       body      map[string]types.NodePosition  true  "Node name to {x, y}, the map itself as the body"
+//	@Success      204        "No Content"
 //	@Failure      400        {object}  types.ErrorResponse
 //	@Failure      500        {object}  types.ErrorResponse
 //	@Router       /network/positions/{namespace} [post]
 func swaggerSaveNodePositions() {}
+
+// swaggerGetLayout godoc
+//
+//	@Summary      Get the graph layout
+//	@Description  The namespace's node positions and annotations, one document kept in the namespace as the ConfigMap kubendt-internal-layout.
+//	@Tags         network
+//	@Produce      json
+//	@Param        namespace  path      string  true  "Namespace name"
+//	@Success      200        {object}  types.Layout
+//	@Failure      500        {object}  types.ErrorResponse
+//	@Router       /network/layout/{namespace} [get]
+func swaggerGetLayout() {}
+
+// swaggerPutLayout godoc
+//
+//	@Summary      Save the graph layout
+//	@Description  Replaces the namespace's node positions and annotations with the document given.
+//	@Tags         network
+//	@Accept       json
+//	@Param        namespace  path      string        true  "Namespace name"
+//	@Param        body       body      types.Layout  true  "The whole layout"
+//	@Success      204        "No Content"
+//	@Failure      400        {object}  types.ErrorResponse
+//	@Failure      500        {object}  types.ErrorResponse
+//	@Router       /network/layout/{namespace} [put]
+func swaggerPutLayout() {}
 
 // swaggerGetNodePositions godoc
 //
@@ -335,7 +364,7 @@ func swaggerSaveNodePositions() {}
 //	@Tags         network
 //	@Produce      json
 //	@Param        namespace  path      string  true  "Namespace name"
-//	@Success      200        {object}  types.NodePositionsResponse
+//	@Success      200        {object}  map[string]types.NodePosition  "Node name to {x, y}, the map itself"
 //	@Failure      500        {object}  types.ErrorResponse
 //	@Router       /network/positions/{namespace} [get]
 func swaggerGetNodePositions() {}
@@ -520,7 +549,7 @@ func swaggerGetDrivers() {}
 // swaggerGetDriver godoc
 //
 //	@Summary      Get a single driver
-//	@Description  Returns the full info (type, executor, capabilities and interface-name constraints) for one registered driver. Same per-item shape used by `GET /drivers/`.
+//	@Description  Returns the full info (type, executor, capabilities with their actions and inspections, interface-name constraints, images tried, tools, shells and deprecated aliases) for one registered driver. Same per-item shape used by `GET /drivers/`.
 //	@Tags         drivers
 //	@Produce      json
 //	@Param        driver  path      string  true  "Driver name"
@@ -890,8 +919,8 @@ var _ = types.NetworkDeleteSpecDoc{}
 var _ = types.NetworkModifyRequestDoc{}
 var _ = types.ModifyNetworkResponse{}
 var _ = types.ConfigureNetworkResponse{}
-var _ = types.NodePositionsRequest{}
-var _ = types.NodePositionsResponse{}
+var _ = types.NodePosition{}
+var _ = types.Layout{}
 var _ = types.FileEntry{}
 var _ = types.FilesListResponse{}
 var _ = types.UpdateFileContentRequest{}

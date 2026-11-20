@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import Modal from 'react-modal';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -33,7 +34,13 @@ import { ReactComponent as SlidersIcon } from '../assets/images/icons/sliders.sv
 import { ReactComponent as GaugeIcon } from '../assets/images/icons/gauge.svg';
 import { ReactComponent as SaveIcon } from '../assets/images/icons/save.svg';
 import { ReactComponent as DownloadIcon } from '../assets/images/icons/download.svg';
+import { ReactComponent as ImageIcon } from '../assets/images/icons/image.svg';
+import { ReactComponent as ChevronDownIcon } from '../assets/images/icons/chevron-down.svg';
+import { ReactComponent as FileIcon } from '../assets/images/icons/file.svg';
+import { pictureToPng, pictureToPdf, svgDataUrl } from './graphPicture';
+import { topologyFile } from './topologyExport';
 import InnerGraph from './InnerGraph';
+import { useLayout, isAnnotationId, nodeToAnnotation } from './useLayout';
 import LoadingOverlay from './LoadingOverlay';
 import './NetworkGraph.css';
 import { NODE_SIZE } from './CustomNode';
@@ -768,6 +775,16 @@ const NetworkGraph = ({
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const {
+    annotationNodes,
+    annotationsDirty,
+    loadLayout,
+    showAnnotations,
+    saveLayout,
+    addAnnotation,
+    removeAnnotations,
+    applyAnnotationChanges,
+  } = useLayout();
   const nodesRef = useRef([]);
   const edgesRef = useRef([]);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState(null);
@@ -834,7 +851,8 @@ const NetworkGraph = ({
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [tooltipLoading, setTooltipLoading] = useState(false);
   const [interfacesData, setInterfacesData] = useState({});
-  const [, setSavedPositions] = useState({});
+  // Pods moved since the layout was loaded or saved.
+  const [positionsDirty, setPositionsDirty] = useState(false);
   const [importing, setImporting] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [modifyingTopology, setModifyingTopology] = useState(false);
@@ -1259,6 +1277,38 @@ const NetworkGraph = ({
     timingData: null,
   });
   const [clearPositionsChecked, setClearPositionsChecked] = useState(false);
+  // Export image: the format and background picked in its dialog, and the
+  // function the graph hands over to take the picture.
+  const [imageExport, setImageExport] = useState({
+    format: 'png',
+    transparent: false,
+    margin: 40,
+    scale: 2,
+  });
+  const imageExportRef = useRef({ format: 'png', transparent: false, margin: 40, scale: 2 });
+  // The topology export leaves the link uids out unless asked, so a file
+  // deploys anywhere with fresh ones.
+  const [topologyExport, setTopologyExport] = useState({ keepUids: false });
+  const topologyExportRef = useRef({ keepUids: false });
+  const exportImageRef = useRef(null);
+  // The export menu under its button, closed by a click elsewhere or Esc.
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const onDown = (e) => {
+      if (!exportMenuRef.current?.contains(e.target)) setExportMenuOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setExportMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [exportMenuOpen]);
   const clearPositionsRef = useRef(false);
   const [clearFilesChecked, setClearFilesChecked] = useState(false);
   const clearFilesRef = useRef(false);
@@ -2025,12 +2075,26 @@ const NetworkGraph = ({
   };
 
   const handleNodesChange = (changes) => {
-    changes.forEach((change) => {
+    // The annotations are nodes of their own: their changes go to the layout.
+    const own = [];
+    const ann = [];
+    for (const change of changes) (isAnnotationId(change.id) ? ann : own).push(change);
+    if (ann.length > 0) {
+      // A resize commits before the frame paints, or the pending size lands
+      // inside the resize observer's delivery and Chrome reports a loop.
+      if (ann.some((c) => c.type === 'dimensions' && c.resizing)) {
+        flushSync(() => applyAnnotationChanges(ann));
+      } else {
+        applyAnnotationChanges(ann);
+      }
+    }
+    own.forEach((change) => {
       if (change.type === 'position' && change.id && change.position) {
         positionRef.current[change.id] = change.position;
       }
     });
-    onNodesChange(changes);
+    if (own.some((c) => c.type === 'position')) setPositionsDirty(true);
+    if (own.length > 0) onNodesChange(own);
   };
 
   // When a node is dropped too close to another, push ONLY the dropped node out
@@ -2080,57 +2144,97 @@ const NetworkGraph = ({
     animateNodesFromTo({ [nodeId]: dropPos }, { [nodeId]: pos }, setNodes, 520);
   };
 
-  // POST a { id: {x, y} } map to the backend and update the saved snapshot.
-  // Shared by the explicit "Save positions" button and the auto-save after a
-  // modify.
+  // POST a { id: {x, y} } map to the backend, the auto-save after a modify.
   const persistPositions = async (positionsToSave) => {
     await fetch(`${API_BASE_URL}/network/positions/${namespace}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(positionsToSave),
     });
-    setSavedPositions(positionsToSave);
+    setPositionsDirty(false);
   };
 
-  const handleSavePositions = async () => {
-    if (nodes.length === 0) {
-      setAlertModal({
-        isOpen: true,
-        type: 'warning',
-        title: 'No nodes',
-        message: 'There are no nodes to save positions for.',
-        onConfirm: () => setAlertModal((prev) => ({ ...prev, isOpen: false })),
-        onCancel: () => setAlertModal((prev) => ({ ...prev, isOpen: false })),
-      });
-      return;
-    }
-
+  // The whole layout, positions and annotations. The marker going out is
+  // the confirmation.
+  const handleSaveLayout = async () => {
+    if (nodes.length === 0 && annotationNodes.length === 0) return;
     const positionsToSave = Object.fromEntries(nodes.map((n) => [n.id, n.position]));
-
     try {
-      await persistPositions(positionsToSave);
-      setAlertModal({
-        isOpen: true,
-        type: 'success',
-        title: 'Positions saved',
-        message: 'Node positions (x, y) have been saved successfully.',
-        onConfirm: () => setAlertModal((prev) => ({ ...prev, isOpen: false })),
-        onCancel: () => setAlertModal((prev) => ({ ...prev, isOpen: false })),
-      });
+      await saveLayout(namespace, positionsToSave);
+      setPositionsDirty(false);
     } catch (error) {
-      console.error('❌ Error saving positions:', error);
-      showError('Error saving positions', 'An error occurred while saving node positions.');
+      console.error('❌ Error saving the layout:', error);
+      showError(
+        'Error saving the layout',
+        'An error occurred while saving the positions and annotations.'
+      );
     }
   };
 
-  const handleExportTopology = async () => {
-    if (!namespace) return;
+  // Ctrl+S saves the layout when something changed, and never opens the
+  // browser's save dialog on the graph.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+      e.preventDefault();
+      if ((positionsDirty || annotationsDirty) && !isBusy) handleSaveLayout();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
+  const exportImageNow = async () => {
+    const { format, transparent, margin, scale } = imageExportRef.current;
     try {
-      const res = await fetch(`${API_BASE_URL}/network/get-network/${namespace}`);
-      const data = await res.json();
+      const picture = await exportImageRef.current?.({
+        margin: Math.min(400, Math.max(0, Number(margin) || 0)),
+        transparent: format !== 'pdf' && transparent,
+      });
+      if (!picture) return;
+      const { svg, width, height } = picture;
+      const name = `graph-${namespace}.${format}`;
+      if (format === 'pdf') {
+        (await pictureToPdf(svg, width, height)).save(name);
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = format === 'svg' ? svgDataUrl(svg) : await pictureToPng(svg, width, height, scale);
+      a.download = name;
+      a.click();
+    } catch (err) {
+      console.error('❌ Error exporting the graph image:', err);
+      showError('Export failed', err.message || 'Could not export the graph as an image.');
+    }
+  };
 
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const handleExportImageClick = () => {
+    if (nodes.length === 0) return;
+    setAlertModal({
+      isOpen: true,
+      type: 'confirm',
+      title: 'Export image',
+      message: 'The graph as it is now: nodes, links and annotations, with a margin around them.',
+      confirmText: 'Export',
+      cancelText: 'Cancel',
+      showImageOptions: true,
+      onConfirm: () => {
+        setAlertModal((prev) => ({ ...prev, isOpen: false, showImageOptions: false }));
+        exportImageNow();
+      },
+      onCancel: () =>
+        setAlertModal((prev) => ({ ...prev, isOpen: false, showImageOptions: false })),
+    });
+  };
+
+  const exportTopologyNow = async () => {
+    try {
+      // The file carries the layout too, so a deploy of it brings the picture back.
+      const res = await fetch(`${API_BASE_URL}/network/get-network/${namespace}?layout=true`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      const file = topologyFile(data, topologyExportRef.current);
+
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -2141,6 +2245,25 @@ const NetworkGraph = ({
       console.error('❌ Error exporting topology:', err);
       showError('Export failed', err.message || 'Could not export the current topology.');
     }
+  };
+
+  const handleExportTopology = () => {
+    if (!namespace) return;
+    setAlertModal({
+      isOpen: true,
+      type: 'confirm',
+      title: 'Export topology',
+      message: 'The nodes, links and layout as a file the deploy takes.',
+      confirmText: 'Export',
+      cancelText: 'Cancel',
+      showTopologyOptions: true,
+      onConfirm: () => {
+        setAlertModal((prev) => ({ ...prev, isOpen: false, showTopologyOptions: false }));
+        exportTopologyNow();
+      },
+      onCancel: () =>
+        setAlertModal((prev) => ({ ...prev, isOpen: false, showTopologyOptions: false })),
+    });
   };
 
   // Downloads the configuration applied in this namespace as a network_conf
@@ -2183,16 +2306,22 @@ const NetworkGraph = ({
     if (!json || typeof json !== 'object' || Array.isArray(json)) {
       throw new Error('Topology JSON must be an object.');
     }
-    const allowedKeys = new Set(['nodes', 'links']);
+    const allowedKeys = new Set(['nodes', 'links', 'layout', 'placement']);
     for (const key of Object.keys(json)) {
       if (!allowedKeys.has(key)) {
         throw new Error(
-          `Unrecognized root-level field: '${key}'. Only 'nodes' and 'links' are allowed.`
+          `Unrecognized root-level field: '${key}'. Only 'nodes', 'links', 'layout' and 'placement' are allowed.`
         );
       }
     }
+    if (json.placement !== undefined && !['pack', 'spread'].includes(json.placement)) {
+      throw new Error("'placement' must be 'pack' or 'spread'.");
+    }
     if (!Array.isArray(json.nodes) || json.nodes.length < 1) {
       throw new Error('Must have at least 1 node.');
+    }
+    if (json.layout !== undefined && (typeof json.layout !== 'object' || json.layout === null)) {
+      throw new Error("'layout' must be an object with positions and annotations.");
     }
 
     const nodeNames = new Set();
@@ -2302,8 +2431,9 @@ const NetworkGraph = ({
       // Snapshot the real saved positions (loaded from the DB on namespace
       // change) BEFORE buildPlaceholderNodes runs, because that function
       // pins its own grid layout into positionRef and would otherwise make
-      // every fresh import look like it already had saved positions.
-      const savedSnapshot = { ...positionRef.current };
+      // every fresh import look like it already had saved positions. The
+      // positions the file carries count as saved, the backend writes them.
+      const savedSnapshot = { ...positionRef.current, ...(json.layout?.positions || {}) };
 
       // Render "creating" placeholders straight from the JSON so the user
       // sees the graph appear before the backend finishes. Deep-copy links
@@ -2385,6 +2515,10 @@ const NetworkGraph = ({
         }
       }
 
+      // The annotations the file brings show with the placeholders, so the
+      // picture is whole while the deploy runs.
+      if (Array.isArray(json.layout?.annotations)) showAnnotations(json.layout.annotations);
+
       // Track what we optimistically added so we can roll it back on
       // backend errors (lock conflict, validation, etc.), otherwise the
       // partial graph lingers until the user manually refreshes.
@@ -2398,6 +2532,8 @@ const NetworkGraph = ({
         if (phEdgeIds.size > 0) {
           setEdges((prev) => prev.filter((e) => !phEdgeIds.has(e.id)));
         }
+        // and the saved layout comes back in place of the file's
+        if (json.layout) loadLayout(namespace).catch(() => {});
       };
 
       let res;
@@ -2418,6 +2554,20 @@ const NetworkGraph = ({
       if (res.ok) {
         const payload = await res.json().catch(() => null);
         await fetchTopology(true);
+        // The deploy wrote the layout the file carried: pick the annotations
+        // and the positions up from the namespace.
+        if (json.layout) {
+          try {
+            const positions = await loadLayout(namespace);
+            positionRef.current = { ...positionRef.current, ...positions };
+            setNodes((prev) =>
+              prev.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n))
+            );
+            setPositionsDirty(false);
+          } catch (e) {
+            console.error('❌ Error loading the layout after the deploy:', e);
+          }
+        }
         showOperationSuccessModal(
           'Topology deployed',
           payload?.message || 'Network infrastructure deployed successfully.',
@@ -2559,11 +2709,11 @@ const NetworkGraph = ({
     }
 
     const keys = Object.keys(json);
-    const allowedKeys = new Set(['add', 'delete', 'scale']);
+    const allowedKeys = new Set(['add', 'delete', 'scale', 'positions']);
     for (const key of keys) {
       if (!allowedKeys.has(key)) {
         throw new Error(
-          `Unrecognized root-level field: '${key}'. Only 'add', 'delete' and 'scale' are allowed.`
+          `Unrecognized root-level field: '${key}'. Only 'add', 'delete', 'scale' and 'positions' are allowed.`
         );
       }
     }
@@ -2571,8 +2721,17 @@ const NetworkGraph = ({
     const hasAdd = Object.prototype.hasOwnProperty.call(json, 'add');
     const hasDelete = Object.prototype.hasOwnProperty.call(json, 'delete');
     const hasScale = Object.prototype.hasOwnProperty.call(json, 'scale');
-    if (!hasAdd && !hasDelete && !hasScale) {
-      throw new Error("Modify topology JSON must include 'add', 'delete' and/or 'scale'.");
+    const hasPositions = Object.prototype.hasOwnProperty.call(json, 'positions');
+    if (!hasAdd && !hasDelete && !hasScale && !hasPositions) {
+      throw new Error(
+        "Modify topology JSON must include 'add', 'delete', 'scale' and/or 'positions'."
+      );
+    }
+    if (
+      hasPositions &&
+      (!json.positions || typeof json.positions !== 'object' || Array.isArray(json.positions))
+    ) {
+      throw new Error("'positions' must be an object of pod name to {x, y}.");
     }
 
     const validateAdd = (addObj) => {
@@ -2581,8 +2740,10 @@ const NetworkGraph = ({
       }
       const addKeys = Object.keys(addObj);
       for (const key of addKeys) {
-        if (key !== 'nodes' && key !== 'links') {
-          throw new Error(`'add' contains unsupported field '${key}'. Allowed: 'nodes', 'links'.`);
+        if (key !== 'nodes' && key !== 'links' && key !== 'annotations') {
+          throw new Error(
+            `'add' contains unsupported field '${key}'. Allowed: 'nodes', 'links', 'annotations'.`
+          );
         }
       }
       if (addObj.nodes !== undefined && !Array.isArray(addObj.nodes)) {
@@ -2590,6 +2751,16 @@ const NetworkGraph = ({
       }
       if (addObj.links !== undefined && !Array.isArray(addObj.links)) {
         throw new Error("'add.links' must be an array.");
+      }
+      if (addObj.annotations !== undefined) {
+        if (!Array.isArray(addObj.annotations)) {
+          throw new Error("'add.annotations' must be an array.");
+        }
+        addObj.annotations.forEach((a, i) => {
+          if (!a || typeof a !== 'object' || !isNonEmptyString(a.id)) {
+            throw new Error(`add.annotations[${i}]: must be an object with an id.`);
+          }
+        });
       }
       if (Array.isArray(addObj.nodes)) {
         addObj.nodes.forEach((n, i) => {
@@ -2617,9 +2788,9 @@ const NetworkGraph = ({
       }
       const delKeys = Object.keys(delObj);
       for (const key of delKeys) {
-        if (key !== 'nodes' && key !== 'links') {
+        if (key !== 'nodes' && key !== 'links' && key !== 'annotations') {
           throw new Error(
-            `'delete' contains unsupported field '${key}'. Allowed: 'nodes', 'links'.`
+            `'delete' contains unsupported field '${key}'. Allowed: 'nodes', 'links', 'annotations'.`
           );
         }
       }
@@ -2628,6 +2799,18 @@ const NetworkGraph = ({
       }
       if (delObj.links !== undefined && !Array.isArray(delObj.links)) {
         throw new Error("'delete.links' must be an array.");
+      }
+      if (delObj.annotations !== undefined) {
+        if (!Array.isArray(delObj.annotations)) {
+          throw new Error("'delete.annotations' must be an array of ids.");
+        }
+        delObj.annotations.forEach((id, i) => {
+          if (!isNonEmptyString(id)) {
+            throw new Error(
+              `delete.annotations[${i}]: must be a non-empty string (annotation id).`
+            );
+          }
+        });
       }
       // delete.nodes is just an array of base names (strings) → only type check
       if (Array.isArray(delObj.nodes)) {
@@ -3142,6 +3325,16 @@ const NetworkGraph = ({
       // Pass add.links so new nodes anchor next to the neighbours they connect to.
       const addLinks = json.add && Array.isArray(json.add.links) ? json.add.links : [];
       const allPlaceholderNodes = buildPlaceholderNodes(combinedPlaceholderSpecs, addLinks);
+      // A spot the file gives a new node wins over the anchored guess.
+      if (json.positions) {
+        allPlaceholderNodes.forEach((n) => {
+          const p = json.positions[n.id];
+          if (p) {
+            n.position = { x: p.x, y: p.y };
+            positionRef.current[n.id] = { x: p.x, y: p.y };
+          }
+        });
+      }
 
       // Deep-copy add.links so buildPlaceholderExternalNodes can rewrite
       // "external" → peerLabel without mutating the JSON the backend
@@ -3194,6 +3387,27 @@ const NetworkGraph = ({
         }
       }
 
+      // The file's annotations show at once: the ones it adds join or
+      // replace by id, the ones it deletes go. A refusal brings the saved
+      // ones back.
+      const addAnns = Array.isArray(json.add?.annotations) ? json.add.annotations : [];
+      const delAnns = new Set(
+        Array.isArray(json.delete?.annotations) ? json.delete.annotations : []
+      );
+      const touchesLayout = addAnns.length > 0 || delAnns.size > 0 || !!json.positions;
+      if (addAnns.length > 0 || delAnns.size > 0) {
+        const byId = new Map(
+          annotationNodes
+            .map(nodeToAnnotation)
+            .filter((a) => !delAnns.has(a.id))
+            .map((a) => [a.id, a])
+        );
+        addAnns.forEach((a) => {
+          if (!delAnns.has(a.id)) byId.set(a.id, a);
+        });
+        showAnnotations([...byId.values()]);
+      }
+
       // On backend error we have to drop every optimistic mutation we
       // applied above, otherwise the user keeps seeing "creating"
       // placeholders and red "deleting" pods/edges forever even though
@@ -3210,6 +3424,7 @@ const NetworkGraph = ({
         preMarked.markedLinks.forEach(removeDeletingLink);
         scaleDownPodNames.forEach(removeDeletingPod);
         scaleDownMarkedLinks.forEach(removeDeletingLink);
+        if (touchesLayout) loadLayout(namespace).catch(() => {});
       };
 
       let res;
@@ -3265,6 +3480,19 @@ const NetworkGraph = ({
       // Drop positions of pods removed by a scale-down so they aren't
       // re-persisted or reused if the node is scaled up again later.
       scaleDownPodNames.forEach((n) => delete positionRef.current[n]);
+      // The layout the file changed comes back from the namespace first, so
+      // the auto-save below keeps the spots it gave and the shapes it drew.
+      if (touchesLayout) {
+        try {
+          const positions = await loadLayout(namespace);
+          positionRef.current = { ...positionRef.current, ...positions };
+          setNodes((prev) =>
+            prev.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n))
+          );
+        } catch (e) {
+          console.error('❌ Error loading the layout after the modify:', e);
+        }
+      }
       // Persist the new layout so a reload shows the same arrangement instead of
       // re-running the global force over the changed node set. positionRef is
       // updated synchronously by fetchTopology, so it holds the settled spots.
@@ -3410,19 +3638,18 @@ const NetworkGraph = ({
     creatingNodeTimersRef.current.forEach((t) => clearTimeout(t));
     creatingNodeTimersRef.current = new Map();
 
-    const fetchSavedPositions = async () => {
+    const fetchSavedLayout = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/network/positions/${namespace}`);
-        const data = await res.json();
-        setSavedPositions(data);
+        const data = await loadLayout(namespace);
+        setPositionsDirty(false);
         positionRef.current = { ...data };
       } catch (error) {
-        console.error('❌ Error fetching saved positions:', error);
+        console.error('❌ Error fetching the saved layout:', error);
       }
     };
 
-    fetchSavedPositions();
-  }, [namespace, setNodes, setEdges]);
+    fetchSavedLayout();
+  }, [namespace, setNodes, setEdges, loadLayout]);
 
   useEffect(() => {
     if (!namespace) return;
@@ -3713,10 +3940,10 @@ const NetworkGraph = ({
           })()}
 
         <div className="topbar">
-          {/* IZQUIERDA */}
-          <div className="topbar-left">
+          <div className="topbar-group" role="group" aria-label="Topology">
             <button
-              className="topbar-action-btn topbar-action-import"
+              type="button"
+              className={`topbar-btn${!hasGraph && !initialLoading ? ' topbar-btn-primary' : ''}`}
               disabled={
                 initialLoading ||
                 nodes.length > 0 ||
@@ -3755,33 +3982,15 @@ const NetworkGraph = ({
                 }
                 setTopologyInputKind('import');
               }}
-              title="Import topology JSON and deploy it in this namespace"
+              title="Import a topology JSON and deploy it in this namespace"
             >
               <UploadIcon className="app-icon" aria-hidden="true" />
-              Import topology
+              {hasGraph ? 'Import' : 'Import topology'}
             </button>
 
             <button
-              className="topbar-action-btn topbar-action-clear"
-              disabled={
-                !hasGraph ||
-                openShells.length > 0 ||
-                traceOpen ||
-                clearingTopology ||
-                loadingConfig ||
-                modifyingTopology ||
-                importing ||
-                topologyInputKind !== null
-              }
-              onClick={handleClearTopologyClick}
-              title="Delete all deployed topology resources in this namespace without deleting the namespace"
-            >
-              <TrashIcon className="app-icon" aria-hidden="true" />
-              Clear topology
-            </button>
-
-            <button
-              className="topbar-action-btn topbar-action-modify"
+              type="button"
+              className="topbar-btn"
               disabled={
                 !hasGraph ||
                 openShells.length > 0 ||
@@ -3793,14 +4002,37 @@ const NetworkGraph = ({
                 topologyInputKind !== null
               }
               onClick={handleModifyTopologyClick}
-              title="Apply modify topology JSON with 'add' and/or 'delete'"
+              title="Apply a modify JSON: add, delete, scale, annotations and positions"
             >
               <EditIcon className="app-icon" aria-hidden="true" />
-              Modify topology
+              Modify
             </button>
 
             <button
-              className="topbar-action-btn topbar-action-config"
+              type="button"
+              className="topbar-btn topbar-btn-danger"
+              disabled={
+                !hasGraph ||
+                openShells.length > 0 ||
+                traceOpen ||
+                clearingTopology ||
+                loadingConfig ||
+                modifyingTopology ||
+                importing ||
+                topologyInputKind !== null
+              }
+              onClick={handleClearTopologyClick}
+              title="Delete every pod and link of this namespace, the namespace stays"
+            >
+              <TrashIcon className="app-icon" aria-hidden="true" />
+              Clear
+            </button>
+
+            <span className="topbar-sep" aria-hidden="true" />
+
+            <button
+              type="button"
+              className="topbar-btn"
               disabled={
                 !hasGraph ||
                 clearingTopology ||
@@ -3810,106 +4042,156 @@ const NetworkGraph = ({
                 topologyInputKind !== null
               }
               onClick={handleLoadNetworkConfClick}
-              title="Apply a network configuration JSON (targets/actions)"
+              title="Apply a network configuration JSON (targets and actions)"
             >
               <SlidersIcon className="app-icon" aria-hidden="true" />
               Load network conf
             </button>
           </div>
 
-          {/* CENTRO */}
-          <div className="topbar-center">
-            <div className="topbar-tools-row">
-              <label
-                className={`topbar-toggle${hasExternalNodes ? '' : ' disabled'}`}
-                title={
-                  hasExternalNodes
-                    ? 'Hide external networks and their links from the graph'
-                    : 'No external networks in this topology'
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={hideExternal}
-                  disabled={!hasExternalNodes}
-                  onChange={(e) => setHideExternal(e.target.checked)}
-                />
-                <span>Hide external</span>
-              </label>
-
-              <div className="topbar-search">
-                <SearchIcon className="topbar-search-icon" aria-hidden="true" />
-                <input
-                  type="text"
-                  value={graphSearchQuery}
-                  onChange={(e) => setGraphSearchQuery(e.target.value)}
-                  placeholder="Search node…"
-                  aria-label="Search node by name"
-                  disabled={nodes.length === 0}
-                />
-                <span className="topbar-search-count">
-                  {graphSearchQuery &&
-                    (() => {
-                      const q = graphSearchQuery.trim().toLowerCase();
-                      const count = nodes.filter((n) => {
-                        const label = (n.data?.label || '').toLowerCase();
-                        const id = (n.id || '').toLowerCase();
-                        return label.includes(q) || id.includes(q);
-                      }).length;
-                      return `${count} match${count === 1 ? '' : 'es'}`;
-                    })()}
-                </span>
-                {graphSearchQuery && (
-                  <button
-                    type="button"
-                    className="topbar-search-clear"
-                    onClick={() => setGraphSearchQuery('')}
-                    title="Clear search"
-                  >
-                    <CloseIcon className="app-icon" />
-                  </button>
-                )}
-              </div>
+          <div className="topbar-group" role="group" aria-label="View">
+            <div className="topbar-search">
+              <SearchIcon className="topbar-search-icon" aria-hidden="true" />
+              <input
+                type="text"
+                value={graphSearchQuery}
+                onChange={(e) => setGraphSearchQuery(e.target.value)}
+                placeholder="Search node…"
+                aria-label="Search node by name"
+                disabled={nodes.length === 0}
+              />
+              <span className="topbar-search-count">
+                {graphSearchQuery &&
+                  (() => {
+                    const q = graphSearchQuery.trim().toLowerCase();
+                    const count = nodes.filter((n) => {
+                      const label = (n.data?.label || '').toLowerCase();
+                      const id = (n.id || '').toLowerCase();
+                      return label.includes(q) || id.includes(q);
+                    }).length;
+                    return `${count} match${count === 1 ? '' : 'es'}`;
+                  })()}
+              </span>
+              {graphSearchQuery && (
+                <button
+                  type="button"
+                  className="topbar-search-clear"
+                  onClick={() => setGraphSearchQuery('')}
+                  title="Clear search"
+                >
+                  <CloseIcon className="app-icon" />
+                </button>
+              )}
             </div>
+
+            <span className="topbar-sep" aria-hidden="true" />
+
+            <label
+              className={`topbar-switch${hasExternalNodes ? '' : ' disabled'}`}
+              title={
+                hasExternalNodes
+                  ? 'Show the external networks and their links'
+                  : 'No external networks in this topology'
+              }
+            >
+              <input
+                type="checkbox"
+                checked={hasExternalNodes && !hideExternal}
+                disabled={!hasExternalNodes}
+                onChange={(e) => setHideExternal(!e.target.checked)}
+              />
+              <span className="topbar-switch-track" aria-hidden="true" />
+              External
+            </label>
           </div>
 
-          {/* DERECHA */}
-          <div className="topbar-right">
-            <div className="topbar-right-buttons">
-              <button
-                onClick={!isBusy ? handleSavePositions : undefined}
-                disabled={nodes.length === 0 || isBusy}
-                title="Save node positions (x,y)"
-              >
-                <SaveIcon className="app-icon" aria-hidden="true" />
-                Save positions
-              </button>
+          <div className="topbar-group" role="group" aria-label="Layout and export">
+            <button
+              type="button"
+              className="topbar-btn"
+              onClick={!isBusy ? handleSaveLayout : undefined}
+              disabled={(nodes.length === 0 && annotationNodes.length === 0) || isBusy}
+              title="Save the layout: node positions and annotations"
+            >
+              <SaveIcon className="app-icon" aria-hidden="true" />
+              Save layout
+              {(positionsDirty || annotationsDirty) && (
+                <span className="dirty-dot" aria-label="Unsaved changes">
+                  •
+                </span>
+              )}
+            </button>
 
+            <span className="topbar-sep" aria-hidden="true" />
+
+            <div className="topbar-menu-anchor" ref={exportMenuRef}>
               <button
+                type="button"
+                className={`topbar-btn${exportMenuOpen ? ' topbar-btn-open' : ''}`}
                 disabled={nodes.length === 0 || isBusy}
-                onClick={!isBusy ? handleExportTopology : undefined}
-                title="Export current topology as JSON"
+                onClick={() => setExportMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+                title="Export the topology, the network conf or a picture of the graph"
               >
                 <DownloadIcon className="app-icon" aria-hidden="true" />
-                Export topology
+                Export
+                <ChevronDownIcon className="app-icon topbar-caret" aria-hidden="true" />
               </button>
-
-              <button
-                className="topbar-action-export-config"
-                disabled={nodes.length === 0 || isBusy}
-                onClick={!isBusy ? handleExportNetworkConf : undefined}
-                title="Export the configuration applied in this namespace as network conf JSON"
-              >
-                <DownloadIcon className="app-icon" aria-hidden="true" />
-                Export network conf
-              </button>
+              {exportMenuOpen && (
+                <div className="topbar-menu" role="menu">
+                  <div className="topbar-menu-head">Export</div>
+                  <button
+                    type="button"
+                    className="topbar-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      handleExportTopology();
+                    }}
+                  >
+                    <FileIcon className="app-icon" aria-hidden="true" />
+                    Topology
+                    <span className="topbar-menu-sub">JSON, with layout</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="topbar-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      handleExportNetworkConf();
+                    }}
+                  >
+                    <SlidersIcon className="app-icon" aria-hidden="true" />
+                    Network conf
+                    <span className="topbar-menu-sub">JSON</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="topbar-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      handleExportImageClick();
+                    }}
+                  >
+                    <ImageIcon className="app-icon" aria-hidden="true" />
+                    Image
+                    <span className="topbar-menu-sub">PNG, SVG, PDF</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
         <ReactFlowProvider>
           <InnerGraph
             namespace={namespace}
-            nodes={visibleNodes}
+            exportImageRef={exportImageRef}
+            nodes={
+              annotationNodes.length > 0 ? [...annotationNodes, ...visibleNodes] : visibleNodes
+            }
             edges={visibleEdges}
             onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
@@ -3920,6 +4202,8 @@ const NetworkGraph = ({
             onDeselect={requestClosePanels}
             handleNodesChange={handleNodesChange}
             onNodeDropRelax={relaxDroppedNode}
+            onAddAnnotation={addAnnotation}
+            onDeleteAnnotations={removeAnnotations}
             hoveredInfo={hoveredInfo}
             setHoveredInfo={setHoveredInfo}
             setTooltipPos={setTooltipPos}
@@ -4357,10 +4641,101 @@ const NetworkGraph = ({
         confirmText={alertModal.confirmText}
         cancelText={alertModal.cancelText}
         extraContent={(() => {
+          if (alertModal.showTopologyOptions) {
+            return (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={topologyExport.keepUids}
+                  onChange={(e) => {
+                    const next = { keepUids: e.target.checked };
+                    topologyExportRef.current = next;
+                    setTopologyExport(next);
+                  }}
+                />
+                Keep link uids
+              </label>
+            );
+          }
+          if (alertModal.showImageOptions) {
+            const pick = (patch) => {
+              const next = { ...imageExportRef.current, ...patch };
+              imageExportRef.current = next;
+              setImageExport(next);
+            };
+            return (
+              <>
+                <label>
+                  <input
+                    type="radio"
+                    name="image-format"
+                    checked={imageExport.format === 'png'}
+                    onChange={() => pick({ format: 'png' })}
+                  />
+                  PNG
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="image-format"
+                    checked={imageExport.format === 'svg'}
+                    onChange={() => pick({ format: 'svg' })}
+                  />
+                  SVG
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="image-format"
+                    checked={imageExport.format === 'pdf'}
+                    onChange={() => pick({ format: 'pdf' })}
+                  />
+                  PDF
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={imageExport.transparent && imageExport.format !== 'pdf'}
+                    disabled={imageExport.format === 'pdf'}
+                    onChange={(e) => pick({ transparent: e.target.checked })}
+                  />
+                  Transparent background
+                </label>
+                <label className="alert-modal-field">
+                  Margin
+                  <span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="400"
+                      step="10"
+                      value={imageExport.margin}
+                      onChange={(e) => pick({ margin: e.target.value })}
+                    />
+                    px
+                  </span>
+                </label>
+                <label className="alert-modal-field">
+                  Scale
+                  <select
+                    value={imageExport.scale}
+                    disabled={imageExport.format !== 'png'}
+                    onChange={(e) => pick({ scale: Number(e.target.value) })}
+                  >
+                    <option value={1}>1x</option>
+                    <option value={2}>2x</option>
+                    <option value={3}>3x</option>
+                    <option value={4}>4x</option>
+                  </select>
+                </label>
+              </>
+            );
+          }
           if (alertModal.showPositionCheckbox) {
             return (
               <DeleteExtrasCheckboxes
                 positionsChecked={clearPositionsChecked}
+                positionsLabel="Also delete the saved layout (positions and annotations)"
                 onPositionsChange={(v) => {
                   setClearPositionsChecked(v);
                   clearPositionsRef.current = v;

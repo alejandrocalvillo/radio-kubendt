@@ -27,6 +27,9 @@ definitions:
     type: object
   types.ActionEntry:
     properties:
+      action:
+        example: MyIngress.ipv4_forward
+        type: string
       area_type:
         description: |-
           OSPF areas and authentication. AreaType is stub, totally-stub, nssa or
@@ -38,7 +41,7 @@ definitions:
         description: |-
           BGP: the local AS of bgp_set_router, a neighbour by address with its
           AS, the interface or address the session binds to, and the TTL an
-          eBGP session may cross.
+          eBGP session may cross. Neighbor is also a static neighbour's address.
         example: 65001
         type: integer
       auth_key:
@@ -127,6 +130,11 @@ definitions:
       gateway:
         example: 192.168.1.254
         type: string
+      group:
+        description: Group and Ports are a P4 multicast group and the ports it copies
+          to.
+        example: 1
+        type: integer
       hello_interval:
         example: 10
         type: integer
@@ -145,6 +153,15 @@ definitions:
         type: integer
       level:
         example: level-2
+        type: string
+      mac:
+        description: |-
+          MAC is the address set_mac gives an interface, or the one a static
+          neighbor (add_static_neighbor, keyed by iface and neighbor) resolves to.
+        example: "02:00:00:00:01:01"
+        type: string
+      match:
+        example: 10.0.2.2/32
         type: string
       mode:
         example: rstp
@@ -174,9 +191,16 @@ definitions:
         description: OSPF
         example: "0"
         type: string
+      params:
+        example: 08:00:00:00:02:22 2
+        type: string
       pool:
         example: 172.22.19.0/24
         type: string
+      ports:
+        items:
+          type: integer
+        type: array
       prefix:
         description: |-
           NAT64: the IPv6 prefix that stands for the IPv4 internet (the well
@@ -202,6 +226,12 @@ definitions:
         type: integer
       router_id:
         example: 10.0.255.1
+        type: string
+      table:
+        description: |-
+          P4: a table, one of its actions, the match fields and the action's
+          parameters as simple_switch_CLI takes them, values separated by spaces.
+        example: MyIngress.ipv4_lpm
         type: string
       tcparams:
         allOf:
@@ -235,6 +265,51 @@ definitions:
           history.
         example: false
         type: boolean
+    type: object
+  types.Annotation:
+    properties:
+      border:
+        example: dashed
+        type: string
+      color:
+        example: blue
+        type: string
+      fill:
+        description: 'The fill: none, glass (the default) or solid.'
+        example: solid
+        type: string
+      height:
+        example: 200
+        type: number
+      id:
+        example: a1
+        type: string
+      locked:
+        type: boolean
+      text:
+        example: Site A
+        type: string
+      text_anchor:
+        description: 'Where the text sits in the shape: a corner, a side or the centre.'
+        example: center
+        type: string
+      text_size:
+        example: md
+        type: string
+      type:
+        example: rect
+        type: string
+      width:
+        example: 320
+        type: number
+      x:
+        example: 40
+        type: number
+      "y":
+        example: 60
+        type: number
+      z:
+        type: integer
     type: object
   types.AuthStatus:
     properties:
@@ -580,6 +655,8 @@ definitions:
     type: object
   types.DeployRequest:
     properties:
+      layout:
+        $ref: '#/definitions/types.Layout'
       links:
         items:
           $ref: '#/definitions/types.LinkSpec'
@@ -588,6 +665,14 @@ definitions:
         items:
           $ref: '#/definitions/types.NodeSpec'
         type: array
+      placement:
+        description: |-
+          How the pods spread over the workers: "pack" prefers one worker for
+          the whole namespace (every link a veth, no VXLAN), "spread" a different
+          worker per pod, empty leaves it to the scheduler or to
+          KUBENDT_PLACEMENT. A node's own nodeName and nodeSelector still win.
+        example: pack
+        type: string
     type: object
   types.DeployTimingResponse:
     properties:
@@ -616,6 +701,12 @@ definitions:
     type: object
   types.DriverInfo:
     properties:
+      aliases:
+        example:
+        - BasicHostDriver
+        items:
+          type: string
+        type: array
       capabilities:
         items:
           $ref: '#/definitions/types.CapabilityEntry'
@@ -628,9 +719,19 @@ definitions:
       isDefault:
         example: true
         type: boolean
+      knownImages:
+        example:
+        - quay.io/frrouting/frr:10.7.1
+        items:
+          type: string
+        type: array
       name:
         example: frr-router
         type: string
+      shells:
+        items:
+          $ref: '#/definitions/types.DriverShellEntry'
+        type: array
       tools:
         example:
         - trace
@@ -644,6 +745,8 @@ definitions:
     type: object
   types.DriverMethodEntry:
     properties:
+      example:
+        $ref: '#/definitions/types.DriverMethodExampleEntry'
       label:
         example: Bring interface up
         type: string
@@ -654,6 +757,18 @@ definitions:
         items:
           $ref: '#/definitions/types.DriverMethodParamEntry'
         type: array
+    type: object
+  types.DriverMethodExampleEntry:
+    properties:
+      commands:
+        example:
+        - ip link set eth1 up
+        items:
+          type: string
+        type: array
+      params:
+        additionalProperties: true
+        type: object
     type: object
   types.DriverMethodParamEntry:
     properties:
@@ -704,6 +819,15 @@ definitions:
       total:
         example: 3
         type: integer
+    type: object
+  types.DriverShellEntry:
+    properties:
+      label:
+        example: vtysh console
+        type: string
+      mode:
+        example: vtysh
+        type: string
     type: object
   types.DriversListResponse:
     properties:
@@ -977,6 +1101,17 @@ definitions:
       path:
         example: /home/user/.kube/config
         type: string
+    type: object
+  types.Layout:
+    properties:
+      annotations:
+        items:
+          $ref: '#/definitions/types.Annotation'
+        type: array
+      positions:
+        additionalProperties:
+          $ref: '#/definitions/types.NodePosition'
+        type: object
     type: object
   types.LinkMTUDoc:
     properties:
@@ -1571,8 +1706,28 @@ definitions:
           $ref: '#/definitions/types.NamespaceInfo'
         type: array
     type: object
+  types.NetworkAddSpecDoc:
+    properties:
+      annotations:
+        items:
+          $ref: '#/definitions/types.Annotation'
+        type: array
+      links:
+        items:
+          $ref: '#/definitions/types.LinkSpec'
+        type: array
+      nodes:
+        items:
+          $ref: '#/definitions/types.NodeSpec'
+        type: array
+    type: object
   types.NetworkDeleteSpecDoc:
     properties:
+      annotations:
+        description: Ids of annotations to remove from the graph.
+        items:
+          type: string
+        type: array
       links:
         items:
           $ref: '#/definitions/types.LinkSpec'
@@ -1585,9 +1740,15 @@ definitions:
   types.NetworkModifyRequestDoc:
     properties:
       add:
-        $ref: '#/definitions/types.DeployRequest'
+        $ref: '#/definitions/types.NetworkAddSpecDoc'
       delete:
         $ref: '#/definitions/types.NetworkDeleteSpecDoc'
+      positions:
+        additionalProperties:
+          $ref: '#/definitions/types.NodePosition'
+        description: Positions merged per pod, how a new node gets its spot on the
+          graph.
+        type: object
       scale:
         description: |-
           Scale changes the replica count of existing nodes. Each entry takes
@@ -1599,6 +1760,10 @@ definitions:
     type: object
   types.NetworkTopologyResponse:
     properties:
+      layout:
+        allOf:
+        - $ref: '#/definitions/types.Layout'
+        description: The graph's layout, with ?layout=true and when there is one.
       links:
         items:
           $ref: '#/definitions/types.LinkSpec'
@@ -1607,6 +1772,10 @@ definitions:
         items:
           $ref: '#/definitions/types.NodeSpec'
         type: array
+      placement:
+        description: The placement the namespace was deployed with, when any.
+        example: pack
+        type: string
     type: object
   types.NodeAddressDoc:
     properties:
@@ -1728,20 +1897,6 @@ definitions:
       "y":
         example: 340
         type: number
-    type: object
-  types.NodePositionsRequest:
-    properties:
-      positions:
-        additionalProperties:
-          $ref: '#/definitions/types.NodePosition'
-        type: object
-    type: object
-  types.NodePositionsResponse:
-    properties:
-      positions:
-        additionalProperties:
-          $ref: '#/definitions/types.NodePosition'
-        type: object
     type: object
   types.NodeResourceQuantityDoc:
     properties:
@@ -3024,8 +3179,10 @@ paths:
       - drivers
   /drivers/{driver}:
     get:
-      description: Returns the full info (type, executor, capabilities and interface-name
-        constraints) for one registered driver. Same per-item shape used by `GET /drivers/`.
+      description: Returns the full info (type, executor, capabilities with their
+        actions and inspections, interface-name constraints, images tried, tools,
+        shells and deprecated aliases) for one registered driver. Same per-item shape
+        used by `GET /drivers/`.
       parameters:
       - description: Driver name
         in: path
@@ -3895,13 +4052,22 @@ paths:
   /network/clear-topology/{namespace}:
     delete:
       description: Deletes all topology resources in a namespace without deleting
-        the namespace itself.
+        the namespace itself. The graph's layout and the namespace files stay unless
+        asked.
       parameters:
       - description: Namespace name
         in: path
         name: namespace
         required: true
         type: string
+      - description: Also delete the graph's layout, positions and annotations.
+        in: query
+        name: deletePositions
+        type: boolean
+      - description: Also delete the namespace files (file manager).
+        in: query
+        name: deleteFiles
+        type: boolean
       produces:
       - application/json
       responses:
@@ -3974,10 +4140,15 @@ paths:
     post:
       consumes:
       - application/json
-      description: Deploys a full network topology (nodes + links) into a namespace.
+      description: 'Deploys a full network topology (nodes + links) into a namespace.
         In links, use the reserved name "external" for either node or peerNode to
         create a host uplink (external network connection). Both ends of a link cannot
-        be "external" simultaneously.
+        be "external" simultaneously. An optional layout (positions and annotations,
+        what the export writes) is applied once the pods are up: what it brings replaces
+        that part of the namespace''s layout, what it leaves out stays. An optional
+        placement, pack or spread, prefers one worker for the whole namespace or a
+        different one per pod; it is kept on the namespace, a later modify follows
+        it and get-network returns it.'
       parameters:
       - description: Namespace name
         in: path
@@ -3989,7 +4160,7 @@ paths:
         in: query
         name: force
         type: boolean
-      - description: Topology definition
+      - description: Topology definition, with an optional layout
         in: body
         name: body
         required: true
@@ -4056,13 +4227,19 @@ paths:
       - network
   /network/get-network/{namespace}:
     get:
-      description: Returns the current network topology deployed in a namespace.
+      description: Returns the current network topology deployed in a namespace, as
+        a file the deploy takes back.
       parameters:
       - description: Namespace name
         in: path
         name: namespace
         required: true
         type: string
+      - description: Include the graph's layout (positions and annotations) so the
+          file replicates the scenario with its picture.
+        in: query
+        name: layout
+        type: boolean
       produces:
       - application/json
       responses:
@@ -4075,6 +4252,61 @@ paths:
           schema:
             $ref: '#/definitions/types.ErrorResponse'
       summary: Get network topology
+      tags:
+      - network
+  /network/layout/{namespace}:
+    get:
+      description: The namespace's node positions and annotations, one document kept
+        in the namespace as the ConfigMap kubendt-internal-layout.
+      parameters:
+      - description: Namespace name
+        in: path
+        name: namespace
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Layout'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Get the graph layout
+      tags:
+      - network
+    put:
+      consumes:
+      - application/json
+      description: Replaces the namespace's node positions and annotations with the
+        document given.
+      parameters:
+      - description: Namespace name
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: The whole layout
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/types.Layout'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Save the graph layout
       tags:
       - network
   /network/links/{namespace}:
@@ -4111,9 +4343,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Adds or removes nodes/links from an existing topology. Any change
-        (add, delete or scale) returns 412 when the Meshnet CNI is not detected, since
-        it restarts or creates pods that need rewiring. Bypass with force=true. Only
+      description: Adds or removes nodes, links and graph annotations in an existing
+        topology, and places nodes with positions merged per pod. Any change (add,
+        delete or scale) returns 412 when the Meshnet CNI is not detected, since it
+        restarts or creates pods that need rewiring. Bypass with force=true. Only
         clearing a topology is exempt.
       parameters:
       - description: Namespace name
@@ -4178,9 +4411,11 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Node name to {x, y}, the map itself
           schema:
-            $ref: '#/definitions/types.NodePositionsResponse'
+            additionalProperties:
+              $ref: '#/definitions/types.NodePosition'
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -4198,19 +4433,19 @@ paths:
         name: namespace
         required: true
         type: string
-      - description: Map of node name to {x, y} position
+      - description: Node name to {x, y}, the map itself as the body
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/types.NodePositionsRequest'
+          additionalProperties:
+            $ref: '#/definitions/types.NodePosition'
+          type: object
       produces:
       - application/json
       responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.MessageResponse'
+        "204":
+          description: No Content
         "400":
           description: Bad Request
           schema:

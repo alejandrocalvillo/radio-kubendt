@@ -8,7 +8,7 @@
    <a href="https://doi.org/10.5281/zenodo.21276320"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21276320.svg" alt="DOI" /></a>
 </p>
 
-> Last reviewed: 7 Nov 2026 (upstream) · radio emulation fork: 16 Nov 2026
+> Last reviewed: 19 Nov 2026 (upstream) · radio emulation fork: 20 Nov 2026
 
 **KubeNDT** is a platform for deploying and operating virtual network topologies on Kubernetes.
 
@@ -130,19 +130,20 @@ KubeNDT bundles a small set of third-party SVG icons in its frontend. See [ATTRI
 - **Interactive terminal shell** with WebSocket for real-time pod access
 - **Dynamic network modification** - add/delete nodes and links without redeploying the entire topology
 - **Configuration management** - mount configuration files, environment variables, and dynamic daemon setup
-- **Persistent topology state** - save/export topologies as JSON for reproducible deployments
+- **Persistent topology state** - save/export topologies as JSON for reproducible deployments, the export carrying the graph's layout (positions and annotations) so a deploy of it brings the picture back and leaving link uids out unless asked, and the graph itself exported as a PNG, SVG or PDF picture
 
 ### Advanced Networking Features
 
-- **Layer 2 operations**: Interface management, bridge creation, VLAN access and trunk ports, VLAN subinterfaces and SVIs, spanning tree (STP on a Linux bridge, STP or RSTP on Open vSwitch)
-- **Layer 3 operations**: IP address assignment, static routing, default gateway configuration, IPv4 and IPv6 alike (a link carries one family on both ends)
+- **Layer 2 operations**: Interface management and MAC addresses, bridge creation, VLAN access and trunk ports, VLAN subinterfaces and SVIs, spanning tree (STP on a Linux bridge, STP or RSTP on Open vSwitch)
+- **Layer 3 operations**: IP address assignment, static routing, default gateway configuration, static ARP and NDP entries, DNS resolver, IPv4 and IPv6 alike (a link carries one family on both ends)
 - **Routing protocols**: OSPFv2, OSPFv3, RIP (RIPv2 and RIPng), BGP and IS-IS as driver actions on FRR and VyOS routers, the rest of FRRouting reachable through its console
 - **Traffic control (QoS)**: Rate limiting, traffic shaping, netem (network emulation)
 - **OpenFlow and SDN**: an Open vSwitch under a controller (`set_controller`, fail mode, datapath id, static flows) and a Faucet controller as a node, its configuration applied from the file manager and reloaded live
-- **Live reads per node**: routing table, ARP and NDP, NAT rules, MAC tables, VLAN ports, spanning tree, OpenFlow flows, OSPF, OSPFv3, RIP, BGP and IS-IS state, and a controller's datapaths and learned hosts, through one endpoint for every driver
+- **P4 switches**: BMv2's `simple_switch` as a switch node, the compiled program loaded from the file manager and swapped live, its table entries, defaults and multicast groups as actions kept in the history and replayed after a restart
+- **Live reads per node**: routing table, ARP and NDP, NAT rules, MAC tables, VLAN ports, spanning tree, OpenFlow flows, OSPF, OSPFv3, RIP, BGP and IS-IS state, a controller's datapaths and learned hosts, and a P4 switch's ports, tables, entries, multicast groups, counters and registers, through one endpoint for every driver
 - **NAT/Port forwarding**: Source NAT (SNAT) and Destination NAT (DNAT) for both families, and NAT64 for IPv6-only hosts reaching IPv4
 - **Network diagnostics**: Real-time interface status, IP address tracking, traffic analysis
-- **Live packet capture**: Wireshark-like per-interface capture streamed to the dashboard, with `.pcap` export
+- **Live packet capture**: Wireshark-like per-interface capture streamed to the dashboard, with `.pcap` export, stopping by itself at a size cap so a capture left running cannot fill a worker
 - **Packet-path visualization**: run a traceroute from any node and watch the packet hop across the graph, with tunnel and drop/delivery detection and optional per-hop latency stats. Also available as a REST endpoint
 - **Throughput tests**: iperf3 between two nodes from the dashboard or the API, TCP or UDP, with the server started by the platform on the destination node and one bar per second while it runs
 
@@ -258,7 +259,7 @@ The full technical details were moved out of this top-level README to keep first
 
 ## Use Cases & Examples
 
-KubeNDT ships **9 reference deployments** in `deploy/examples/`, numbered in the order worth trying them. Each one has a README with the steps and the checks, and the regression in [experiments/](experiments/) runs all nine end to end, with a restart in each to exercise the replay.
+KubeNDT ships **11 reference deployments** in `deploy/examples/`, numbered in the order worth trying them. Each one has a README with the steps and the checks, and the regression in [experiments/](experiments/) runs them all end to end, with a restart in each to exercise the replay.
 
 | Example | Guide | What it exercises | Needs beyond the cluster | Complexity |
 | --- | --- | --- | --- | --- |
@@ -272,6 +273,7 @@ KubeNDT ships **9 reference deployments** in `deploy/examples/`, numbered in the
 | [8-test-two-orgs-rip-ospf](deploy/examples/8-test-two-orgs-rip-ospf/) | [8-README](deploy/examples/8-test-two-orgs-rip-ospf/README.md) | Two organizations on 27 nodes: A on RIPv2 over a six router mesh, B on OSPFv2 in four areas with DR and BDR, stub and totally stubby areas, summarization and MD5, and a border router redistributing between them | Nothing | ⭐⭐⭐ |
 | [9-test-four-orgs-bgp](deploy/examples/9-test-four-orgs-bgp/) | [9-README](deploy/examples/9-test-four-orgs-bgp/README.md) | Four organizations on 32 nodes joined in an eBGP ring: RIPv2, OSPFv2 in one area, IS-IS over IPv4, and an IPv6-only one on IS-IS that reaches the others through NAT64 at its border | Nothing | ⭐⭐⭐⭐ |
 | [10-test-layer2-sdn](deploy/examples/10-test-layer2-sdn/) | [10-README](deploy/examples/10-test-layer2-sdn/README.md) | One site at layer 2: VLANs across OVS and Linux switches in a triangle, classic spanning tree with a chosen root, a router on a stick and an SVI, then the OVS pair handed to a Faucet controller with its VLANs from a YAML and an ACL applied live | Nothing | ⭐⭐⭐ |
+| [11-test-p4](deploy/examples/11-test-p4/) | [11-README](deploy/examples/11-test-p4/README.md) | Three P4 switches (BMv2) in a triangle running the tutorials' `basic.p4` with the entries from files, a path changed by one entry, then one switch swapped live to an ECMP program that spreads flows over its two uplinks, multicast groups forming a tree over the triangle, and a program that resolves the hosts by ARP itself | Nothing | ⭐⭐⭐ |
 
 The VyOS image is built once with `build-vyos-qcow2.sh` and imported on the workers, see [deploy/custom_images/qemu/vyos-router/](deploy/custom_images/qemu/vyos-router/); the EXOS switch image the same way with `build-exos-qcow2.sh`, see [deploy/custom_images/qemu/exos-switch/](deploy/custom_images/qemu/exos-switch/). The external uplink is a second interface of a pod on the host network the workers hang from. The examples label it "External Network" and their READMEs say which steps need it.
 
@@ -294,7 +296,7 @@ The VyOS image is built once with `build-vyos-qcow2.sh` and imported on the work
 
 Example images are pinned to version tags (FRR from `quay.io/frrouting/frr`, where the project publishes it; Open vSwitch from `ghcr.io/emigcm98/kubendt-ovs`, built in [deploy/custom_images/](deploy/custom_images/) and tagged by the Open vSwitch version, since upstream publishes no maintained image). `networkstatic/iperf3` and `docker_open5gs` have no version tags and keep their moving tag. A driver declares the images it was tried with, the node panel lists them, and a deploy warns, never refuses, on any other.
 
-The measurement scripts behind the published evaluation, and the regression that runs the nine examples end to end, live in [experiments/](experiments/). They need a cluster and are not run in CI.
+The measurement scripts behind the published evaluation, and the regression that runs the examples end to end, live in [experiments/](experiments/). They need a cluster and are not run in CI.
 
 ## Known Limitations
 
@@ -324,6 +326,8 @@ Nodes get a 2 s termination grace period instead of the Kubernetes default of 30
 ### Pod placement
 
 Nodes accept `nodeSelector` (labels a worker must carry, e.g. `{"kubendt/kvm": "true"}` for QEMU nodes) and `nodeName` (one worker, by name) in the topology JSON. Both are checked against the cluster before deploying, so a typo or an unlabelled cluster fails fast with a `400` instead of pods sitting Pending. Placement lives in the StatefulSet template and applies to every replica of the node: with `nodeSelector` the scheduler still spreads replicas over the matching workers, with `nodeName` all of them land on that one worker. To pin instances to different workers, declare them as separate nodes. Where the two ends of a link land decides how Meshnet realizes it, veth on the same worker or VXLAN across workers, so pinning also makes that choice part of the specification. Kubernetes does not know which workers have `/dev/kvm`, so the label has to be put there, by hand or by a labeler of your choice.
+
+A topology can also say how the whole lab spreads with a top-level `placement`: `pack` prefers one worker for every pod of the namespace, so a lab that fits lands together with every link a veth at the full MTU and no VXLAN in the path, and `spread` prefers a different worker per pod. Both are preferences, a lab that does not fit on one worker still deploys, and a node's own `nodeName` or `nodeSelector` wins over them. `KUBENDT_PLACEMENT` on the backend is the default when the file says nothing. The placement is kept on the namespace, so nodes added later by a modify follow it and the export carries it.
 
 ### Mounted files (namespace file manager)
 
@@ -369,7 +373,7 @@ View live at: http://localhost:8080/swagger/index.html
 
 1. Define the interface and declare its actions in `backend/capabilities/your_capability.go`: one `actions.Action` per action with its type, label, params and the method it calls
 2. Create a base implementation for reuse across drivers
-3. Add a sample of each action to `backend/helpers/testdata/actions.json` and regenerate the expected plans with `go test ./helpers -run TestActionPlans -update`
+3. Add a sample of each action to `backend/helpers/action_samples.json` and regenerate the expected plans with `go test ./helpers -run TestActionPlans -update`
 4. Use it in network configuration via POST `/network/configure`. Dispatch, validation and `GET /drivers` follow from the declaration
 
 ### QEMU Image Documentation

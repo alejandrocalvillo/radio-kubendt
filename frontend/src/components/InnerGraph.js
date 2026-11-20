@@ -9,7 +9,12 @@ import {
   useReactFlow,
   useStoreApi,
 } from 'reactflow';
+import { paintGraph, loadIcons, loadIconInsets, readTokens } from './graphPicture';
 import LinkEdge from './LinkEdge';
+import AnnotationNode from './AnnotationNode';
+import AnnotationToolbar from './AnnotationToolbar';
+import AnnotationDrawLayer from './AnnotationDrawLayer';
+import { isAnnotationId } from './useLayout';
 import 'reactflow/dist/style.css';
 import MiniMapOverlay from './MiniMapOverlay.js';
 import { ReactComponent as CloseIcon } from '../assets/images/icons/close.svg';
@@ -36,7 +41,7 @@ const MULTI_SELECT_KEYS = ['Shift', 'Control', 'Meta'];
 const GRAPH_MIN_ZOOM = 0.4;
 const GRAPH_MAX_ZOOM = 3.5;
 
-const nodeTypes = { custom: CustomNode };
+const nodeTypes = { custom: CustomNode, annotation: AnnotationNode };
 const edgeTypes = { link: LinkEdge };
 
 const EdgeLabel = ({ x, y, intfName, status, loading, dimmed, onClick, onHover, onRightClick }) => {
@@ -151,6 +156,9 @@ const InnerGraph = ({
   onDeselect,
   handleNodesChange,
   onNodeDropRelax,
+  onAddAnnotation,
+  onDeleteAnnotations,
+  exportImageRef,
   hoveredInfo,
   setHoveredInfo,
   setTooltipPos,
@@ -185,7 +193,8 @@ const InnerGraph = ({
   // (and open the shell instead, without opening the panel underneath).
   const nodeClickTimerRef = useRef(null);
   const NODE_CLICK_DELAY_MS = 220;
-  const { getViewport, setViewport, setCenter, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { getViewport, setViewport, setCenter, zoomIn, zoomOut, fitView, getNodes, getEdges } =
+    useReactFlow();
 
   // Single fit used by both the auto-fit and the fit button.
   const fitGraph = useCallback(
@@ -199,6 +208,7 @@ const InnerGraph = ({
   const fitTimerRef = useRef(null);
   useEffect(() => {
     const ids = nodes
+      .filter((n) => n.type !== 'annotation')
       .map((n) => n.id)
       .sort()
       .join(',');
@@ -245,6 +255,21 @@ const InnerGraph = ({
   // True while a selection box is being dragged: interface labels go inert so
   // the box does not stop on them and no tooltip gets stuck.
   const [selecting, setSelecting] = useState(false);
+  // The drawing tool: select, or the kind of annotation the next drag draws.
+  const [tool, setTool] = useState('select');
+  useEffect(() => {
+    if (locked || isBusy) setTool('select');
+  }, [locked, isBusy]);
+  // A tool owns the canvas only: a click anywhere else (the top bar, a
+  // panel, the navbar) goes back to select first, as Esc does.
+  useEffect(() => {
+    if (tool === 'select') return undefined;
+    const onDown = (e) => {
+      if (!containerRef.current?.contains(e.target)) setTool('select');
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [tool]);
   const onSelectionChange = useCallback(({ nodes: picked }) => {
     const ids = picked.map((n) => n.id);
     setSelectedIds((prev) =>
@@ -282,17 +307,55 @@ const InnerGraph = ({
     handleNodesChange(selectedIds.map((id) => ({ id, type: 'select', selected: false })));
   };
 
+  // The graph as a picture, painted from the nodes, links and annotations
+  // (graphPicture) with a margin around; nothing of the screen gets in.
+  const exportImage = async ({ margin = 40, transparent = false } = {}) => {
+    const icons = await loadIcons();
+    const iconInsets = await loadIconInsets(icons);
+    return paintGraph({
+      nodes: getNodes(),
+      edges: getEdges(),
+      margin,
+      transparent,
+      tokens: readTokens(),
+      icons,
+      iconInsets,
+      interfaceStatus: (pod, iface) => interfacesData?.[pod]?.interfaces?.[iface],
+    });
+  };
+  useEffect(() => {
+    if (exportImageRef) exportImageRef.current = exportImage;
+  });
+
+  // Picking a tool drops the selection, so no style bar or resizer hangs
+  // over the canvas while it is active.
+  const pickTool = (next) => {
+    if (next !== 'select') clearSelection();
+    setTool(next);
+  };
+
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== 'Escape' || selectedIds.length === 0) return;
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      handleNodesChange(selectedIds.map((id) => ({ id, type: 'select', selected: false })));
+      if (e.key === 'Escape') {
+        setTool('select');
+        if (selectedIds.length === 0) return;
+        handleNodesChange(selectedIds.map((id) => ({ id, type: 'select', selected: false })));
+        return;
+      }
+      // Delete takes the selected annotations that are not locked; a pod
+      // goes from its menu.
+      if ((e.key === 'Delete' || e.key === 'Backspace') && onDeleteAnnotations) {
+        const locked = new Set(nodes.filter((n) => n.data?.locked).map((n) => n.id));
+        const ids = selectedIds.filter((id) => isAnnotationId(id) && !locked.has(id));
+        if (ids.length > 0) onDeleteAnnotations(ids);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds]);
+  }, [selectedIds, nodes]);
 
   // Remember the lock / repulsion toggles across sessions.
   useEffect(() => {
@@ -525,8 +588,12 @@ const InnerGraph = ({
     return styled;
   });
 
+  // Under a tool nothing moves, and nopan keeps a double click on a node
+  // from zooming, as it does on a draggable one.
+  const inert = tool !== 'select';
   const displayedNodes = nodes.map((n) => {
-    let next = n;
+    let next = inert ? { ...n, draggable: false, className: 'nopan' } : n;
+    if (n.type === 'annotation') return next;
     if (n.id === selectedNodeId) {
       next = { ...next, data: { ...next.data, selected: true } };
     }
@@ -569,7 +636,7 @@ const InnerGraph = ({
   return (
     <div
       ref={containerRef}
-      className={`graph-container${selecting ? ' selecting' : ''}`}
+      className={`graph-container${selecting ? ' selecting' : ''}${tool === 'delete' ? ' tool-delete' : ''}`}
       onPointerDownCapture={(event) => {
         pointerIdRef.current = event.pointerId;
       }}
@@ -604,6 +671,8 @@ const InnerGraph = ({
         }}
         onSelectionEnd={() => setSelecting(false)}
         nodesDraggable={!isBusy && !locked}
+        // Under a tool a click must not pick the pod or the link it lands on.
+        elementsSelectable={tool === 'select'}
         nodeDragThreshold={8}
         minZoom={GRAPH_MIN_ZOOM}
         maxZoom={GRAPH_MAX_ZOOM}
@@ -611,6 +680,12 @@ const InnerGraph = ({
         onPaneContextMenu={(e) => e.preventDefault()}
         onNodeClick={(event, node) => {
           if (isBusy) return;
+          // The delete tool takes the shape it clicks, a locked one stays.
+          if (tool === 'delete') {
+            if (node.type === 'annotation' && !node.data?.locked) onDeleteAnnotations?.([node.id]);
+            return;
+          }
+          if (node.type === 'annotation') return;
           // Shift or Ctrl and a click adds the node to the selection, React
           // Flow handles that; the info panel stays as it is.
           if (event?.shiftKey || event?.ctrlKey || event?.metaKey) return;
@@ -639,7 +714,8 @@ const InnerGraph = ({
             clearTimeout(nodeClickTimerRef.current);
             nodeClickTimerRef.current = null;
           }
-          if (isBusy) return;
+          if (isBusy || tool !== 'select') return;
+          if (node.type === 'annotation') return;
           if (node.data?.type === 'external') return;
           if (!onOpenInteractiveShell) return;
           const info = node.data?.fullInfo;
@@ -648,7 +724,7 @@ const InnerGraph = ({
           onOpenInteractiveShell(info, mode);
         }}
         onEdgeClick={(_, edge) => {
-          if (isBusy) return;
+          if (isBusy || tool !== 'select') return;
           if (setSelectedLink) setSelectedLink(edge);
           setSelectedNodeInfo(null);
           setContextMenu(null);
@@ -658,7 +734,8 @@ const InnerGraph = ({
         onNodeContextMenu={(e, node) => {
           e.preventDefault();
 
-          if (isBusy) return;
+          if (isBusy || tool !== 'select') return;
+          if (node.type === 'annotation') return;
 
           setEdgeContextMenu(null);
           setInterfaceContextMenu(null);
@@ -672,7 +749,7 @@ const InnerGraph = ({
         onEdgeContextMenu={(e, edge) => {
           e.preventDefault();
 
-          if (isBusy) return;
+          if (isBusy || tool !== 'select') return;
 
           // External-endpoint edges aren't deletable through modify-network
           const sourceType = nodes.find((n) => n.id === edge.source)?.data?.type;
@@ -704,6 +781,7 @@ const InnerGraph = ({
           setInterfaceContextMenu(null);
         }}
         onNodeDragStart={(_, node) => {
+          if (!node) return;
           setContextMenu(null);
           setEdgeContextMenu(null);
           setInterfaceContextMenu(null);
@@ -716,6 +794,7 @@ const InnerGraph = ({
         onNodeDragStop={(dragEvent, node, draggedNodes) => {
           const info = dragInfoRef.current;
           dragInfoRef.current = null;
+          if (node.type === 'annotation') return;
           // A group drag moves the selection as a block: no click fallback and
           // no bounce, the arrangement the user made inside the block stays.
           if (draggedNodes && draggedNodes.length > 1) return;
@@ -747,54 +826,67 @@ const InnerGraph = ({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
       >
-        <MiniMapOverlay nodes={nodes} selectedNodeId={selectedNodeInfo?.id} />
+        {tool !== 'select' && tool !== 'delete' && onAddAnnotation && (
+          <AnnotationDrawLayer
+            kind={tool}
+            onDraw={(kind, rect) => {
+              clearSelection();
+              onAddAnnotation(kind, rect);
+            }}
+            onDone={() => setTool('select')}
+          />
+        )}
+        <MiniMapOverlay selectedNodeId={selectedNodeInfo?.id} />
         {/* Custom controls: zoom and fit are animated with a duration so they
             glide (the built-in Controls can't animate the +/- without firing
             twice). Also lets us style them to match the app. */}
-        <Panel position="bottom-left" className="graph-controls">
-          <button
-            type="button"
-            className="graph-control-btn"
-            title="Zoom in"
-            onClick={() => zoomIn({ duration: 150 })}
-          >
-            <PlusIcon className="app-icon" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="graph-control-btn"
-            title="Zoom out"
-            onClick={() => zoomOut({ duration: 150 })}
-          >
-            <MinusIcon className="app-icon" aria-hidden="true" />
-          </button>
-          <button type="button" className="graph-control-btn" title="Fit view" onClick={fitGraph}>
-            <MaximizeIcon className="app-icon" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="graph-control-btn"
-            title={locked ? 'Unlock node dragging' : 'Lock node dragging'}
-            onClick={() => setLocked((v) => !v)}
-          >
-            {locked ? (
-              <LockIcon className="app-icon" aria-hidden="true" />
-            ) : (
-              <UnlockIcon className="app-icon" aria-hidden="true" />
-            )}
-          </button>
-          <button
-            type="button"
-            className={`graph-control-btn${repel ? ' graph-control-btn-active' : ''}`}
-            title={
-              repel
-                ? 'Node repulsion on (nodes spread apart on drop). Hold Ctrl to place close.'
-                : 'Node repulsion off (nodes can overlap)'
-            }
-            onClick={() => setRepel((v) => !v)}
-          >
-            <MagnetIcon className="app-icon" aria-hidden="true" />
-          </button>
+        <Panel position="bottom-left" className="graph-controls-stack">
+          <div className="graph-controls">
+            <button
+              type="button"
+              className="graph-control-btn"
+              title="Zoom in"
+              onClick={() => zoomIn({ duration: 150 })}
+            >
+              <PlusIcon className="app-icon" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="graph-control-btn"
+              title="Zoom out"
+              onClick={() => zoomOut({ duration: 150 })}
+            >
+              <MinusIcon className="app-icon" aria-hidden="true" />
+            </button>
+            <button type="button" className="graph-control-btn" title="Fit view" onClick={fitGraph}>
+              <MaximizeIcon className="app-icon" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="graph-control-btn"
+              title={locked ? 'Unlock node dragging' : 'Lock node dragging'}
+              onClick={() => setLocked((v) => !v)}
+            >
+              {locked ? (
+                <LockIcon className="app-icon" aria-hidden="true" />
+              ) : (
+                <UnlockIcon className="app-icon" aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              className={`graph-control-btn${repel ? ' graph-control-btn-active' : ''}`}
+              title={
+                repel
+                  ? 'Node repulsion on (nodes spread apart on drop). Hold Ctrl to place close.'
+                  : 'Node repulsion off (nodes can overlap)'
+              }
+              onClick={() => setRepel((v) => !v)}
+            >
+              <MagnetIcon className="app-icon" aria-hidden="true" />
+            </button>
+          </div>
+          <AnnotationToolbar tool={tool} setTool={pickTool} disabled={isBusy || locked} />
         </Panel>
         {selectedIds.length > 1 && (
           <Panel position="top-center" className="graph-selection-chip">
@@ -898,11 +990,11 @@ const InnerGraph = ({
                     loading={loadingInterfaces.has(`${edge.source}:${edge.data?.localIntf}`)}
                     dimmed={dimmedByLabel}
                     onClick={() => {
-                      if (isBusy) return;
+                      if (isBusy || tool !== 'select') return;
                       toggleLinkState(edge.source, edge.data?.localIntf, localStatus);
                     }}
                     onRightClick={(e) => {
-                      if (isBusy) return;
+                      if (isBusy || tool !== 'select') return;
                       setInterfaceContextMenu({
                         x: e.clientX,
                         y: e.clientY,
@@ -912,7 +1004,7 @@ const InnerGraph = ({
                       });
                     }}
                     onHover={(e) => {
-                      if (isBusy) return;
+                      if (isBusy || (e && tool !== 'select')) return;
                       if (e) {
                         if (containerRef.current) {
                           const bounds = containerRef.current.getBoundingClientRect();
@@ -949,11 +1041,11 @@ const InnerGraph = ({
                     loading={loadingInterfaces.has(`${edge.target}:${edge.data?.peerIntf}`)}
                     dimmed={dimmedByLabel}
                     onClick={() => {
-                      if (isBusy) return;
+                      if (isBusy || tool !== 'select') return;
                       toggleLinkState(edge.target, edge.data?.peerIntf, peerStatus);
                     }}
                     onRightClick={(e) => {
-                      if (isBusy) return;
+                      if (isBusy || tool !== 'select') return;
                       setInterfaceContextMenu({
                         x: e.clientX,
                         y: e.clientY,
@@ -963,7 +1055,7 @@ const InnerGraph = ({
                       });
                     }}
                     onHover={(e) => {
-                      if (isBusy) return;
+                      if (isBusy || (e && tool !== 'select')) return;
                       if (e) {
                         if (containerRef.current) {
                           const bounds = containerRef.current.getBoundingClientRect();

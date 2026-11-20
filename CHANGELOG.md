@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-19
+
+### Added
+
+- `GET` and `PUT /network/layout/{namespace}`: the graph's node positions and annotations as one document kept in the namespace, the `kubendt-internal-layout` ConfigMap, so a lab carries its layout and any backend sees it. `/network/positions` works on the same document, and the SQLite rows fill it once and mirror it while a database is open.
+- Annotations on the graph: notes, rectangles and ellipses, drawn by dragging with the tools next to the zoom controls, moved, resized and edited in place, deleted with the key, kept under the nodes and links. Save positions becomes Save layout, keeps them in the namespace's layout with the positions, and carries the unsaved marker while the graph has changes, with Ctrl+S to save.
+- A style bar over a selected annotation: ink colour from the palette, fill (none, glass or solid), dashed border, text size, where the text sits in the shape, send to back and bring to front, lock, and delete. A locked shape does not move, resize, edit or go with the key.
+- A delete tool in the strip, under select: the cursor becomes a bin and the shape it clicks goes. Pods and links stay, they come from the topology. Under a tool nothing else on the graph reacts, and a click outside the canvas goes back to select.
+- The topology export carries the graph's layout, positions and annotations, under `layout` (`GET /network/get-network/{namespace}?layout=true`), and the deploy takes the same optional field and applies it once the pods are up, so a scenario replicates with its picture. What the file brings replaces that part of the namespace's layout and what it leaves out stays.
+- A modify takes the graph with it: `add.annotations` draws shapes or replaces the ones with their id, `delete.annotations` removes them by id, and `positions` places nodes, merged per pod.
+- Export image in the top bar: the graph painted as a picture of its own, a plain SVG, a vector PDF or a PNG at the scale picked, nodes, links, interface labels and annotations with the margin asked around them, on a white or a transparent background.
+- An `interfaces` inspection on every node: state, MTU, MAC, addresses, bridge and VLAN parent, so subinterfaces and SVIs show in the State tab.
+- A Drivers page from the Home header with what every driver offers, each action with the commands it runs for sample parameters, where the node panel's driver reference now points. `GET /drivers` adds `shells`, `aliases` and those examples, and `drivers` is a reserved namespace name.
+- A `placement` on the topology, `pack` or `spread`, with `KUBENDT_PLACEMENT` as the default, so a lab that fits lands on one worker with every link a veth. It is kept on the namespace, a modify's add follows it and the export carries it.
+- The examples' topologies carry their layout, with annotations where they help, and their README pictures come from the graph's own image export through `experiments/pictures`. The topology export leaves link uids out unless asked.
+
+### Changed
+
+- The graph's top bar is one row of three quiet groups: Import, Modify, Clear and Load network conf, the search with the External switch, and Save layout with an Export menu for the topology, the network conf and the image. One look for every button, the main action of the state filled.
+- The namespace bar follows: the mark with Home beside it, chips for File Manager and a Namespace menu with Delete history and Delete namespace, the name alone in its pill. The minimap's minimize is a bare dash.
+- The node panel shows CPU and memory as one Usage line and ends where its card ends. The annotation tools sit beside the zoom strip, clear of any panel.
+- The node, link and external panels and the graph's context menus take the look of the bars. Every summary card has the same height.
+
+### Fixed
+
+- The cluster guide's kubeadm option installs flannel before Meshnet and points at a Kubernetes repository that reads its `v1beta4` configuration.
+- A capture stops by itself at a size cap, `KUBENDT_CAPTURE_MAX_MB` (100 by default), so one left running cannot fill a worker's disk and get the lab evicted.
+- The Open5GS example's NFs wait for their link address before starting, so the deploy no longer reports them crashed and restarted.
+
+## [1.10.0] - 2026-11-13
+
+### Added
+
+- A BMv2 image of our own, `ghcr.io/emigcm98/kubendt-p4`: bmv2 1.15.8 built for forwarding (Release, without the logging macros, the event logger and the debugger) on Ubuntu 24.04 with iproute2 and ethtool, published by bmv2 version on every change to its folder.
+- `P4SwitchDriver`, BMv2's `simple_switch` on the `kubendt-p4` image as a switch node: `setup_bridge` gives it the pod's interfaces as ports numbered by name, and `P4Capable` loads a compiled program from the file manager (`load_program`, swapped in place with empty tables) and fills its tables (`table_add`, `table_delete`, `table_set_default`), with the `p4_ports`, `p4_tables` and `p4_entries` inspections. The image starts the switch empty, with swapping enabled.
+- `set_mac` on L2 nodes and `add_static_neighbor` and `remove_static_neighbor` on L3 nodes, an ARP or NDP entry that never ages out. Both name the interface, so a neighbour's restart puts them back and the MACs in a P4 table stay valid.
+- Example 11, `11-test-p4`: three BMv2 switches in a triangle running the tutorials' `basic.p4`, the hosts with fixed MACs and static neighbours as the tutorials' Mininet sets them, the entries from files, a path changed by one entry and a switch restart. Then one switch swaps live to `ecmp.p4`, the same program with equal-cost multipath, and parallel flows spread over its two uplinks. A third part puts the three on `mcast.p4`, the same program with a multicast action, with a group per switch forming a tree over the triangle, so a host's echoes to `224.1.1.1` reach the other two. A fourth part closes it with `arp.p4`, the switch answering ARP for its gateway, learning the hosts' MACs in a register and asking for a host it has not learned, so the hosts drop their static neighbours and the entries carry the port alone. The README says how to compile a program of one's own.
+- A P4 switch port on a link to another worker reads through a veth pair with its offloads off, so the frames the worker NIC's receive offload merges out of a flow's TCP segments are split again before the switch sees them. The switch could not send a frame larger than the MTU, and TCP across workers crawled while UDP and pings passed.
+- `add_multicast_group` and `remove_multicast_group` on the P4 switch, a group of the replication engine with the ports it copies to, and the `p4_multicast_groups` inspection. The groups live outside the program and survive a swap.
+- `p4_counters` and `p4_registers` inspections on the P4 switch, read from what the loaded program declares: every entry of a direct counter by its handle, and the cells of an indexed counter or a register that hold something.
+
+### Fixed
+
+- A configure request that undoes a piece of state and sets it again in the same request (a static neighbour removed and added back, a program load followed by its entries) ran the set instead of skipping it as already applied. `load_program` now takes every table entry and default of the switch with it in the history, whatever their key.
+- The Swagger of `POST` and `GET /network/positions/{namespace}` described a `positions` wrapper the endpoints never took or returned: the body and the answer are the map of node name to `{x, y}` itself, and the save answers 204.
+
+
 ## [1.9.0] - 2026-11-07
 
 ### Added
@@ -312,7 +359,9 @@ Initial public release. KubeNDT deploys and operates virtual network topologies 
 - Health, readiness and version endpoints, and Swagger docs at `/swagger`.
 - Container images published to GHCR and a Docker Compose deployment.
 
-[Unreleased]: https://github.com/emigcm98/kubendt/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/emigcm98/kubendt/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/emigcm98/kubendt/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/emigcm98/kubendt/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/emigcm98/kubendt/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/emigcm98/kubendt/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/emigcm98/kubendt/compare/v1.6.0...v1.7.0

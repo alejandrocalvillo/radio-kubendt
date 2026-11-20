@@ -253,9 +253,22 @@ type NamespaceMetricsResponse struct {
 // ─── Network ─────────────────────────────────────────────────────────────────
 
 // NetworkTopologyResponse is returned by GET /network/get-network/:ns.
+// NetworkAddSpecDoc is the add section of a modify: nodes and links as the
+// deploy takes them, and annotations for the graph, one with an id already
+// drawn replaces it.
+type NetworkAddSpecDoc struct {
+	Nodes       []NodeSpec   `json:"nodes"`
+	Links       []LinkSpec   `json:"links"`
+	Annotations []Annotation `json:"annotations,omitempty"`
+}
+
 type NetworkTopologyResponse struct {
 	Nodes []NodeSpec `json:"nodes"`
 	Links []LinkSpec `json:"links"`
+	// The graph's layout, with ?layout=true and when there is one.
+	Layout *Layout `json:"layout,omitempty"`
+	// The placement the namespace was deployed with, when any.
+	Placement string `json:"placement,omitempty" example:"pack"`
 }
 
 // DeployTimingResponse breaks down deployment duration by phase.
@@ -303,6 +316,8 @@ type ClearTopologyResponse struct {
 type NetworkDeleteSpecDoc struct {
 	Nodes []string   `json:"nodes"`
 	Links []LinkSpec `json:"links"`
+	// Ids of annotations to remove from the graph.
+	Annotations []string `json:"annotations,omitempty"`
 }
 
 // NetworkModifyRequestDoc is the request body for POST /network/modify-network/:ns.
@@ -310,12 +325,14 @@ type NetworkDeleteSpecDoc struct {
 // of them with content. Execution order inside a single request is:
 // delete → scale-down → scale-up → add.
 type NetworkModifyRequestDoc struct {
-	Add    DeployRequest        `json:"add"`
+	Add    NetworkAddSpecDoc    `json:"add"`
 	Delete NetworkDeleteSpecDoc `json:"delete"`
 	// Scale changes the replica count of existing nodes. Each entry takes
 	// the absolute number of replicas the node should end with. Replicas
 	// must be >= 1 (to remove a node entirely use delete.nodes).
 	Scale []ScaleSpec `json:"scale"`
+	// Positions merged per pod, how a new node gets its spot on the graph.
+	Positions map[string]NodePosition `json:"positions,omitempty"`
 }
 
 // ModifyTimingResponse breaks down modify duration by phase.
@@ -388,20 +405,39 @@ type ConfigureNetworkResponse struct {
 	Speedup  float64                 `json:"speedup" example:"6.35"`
 }
 
-// NodePosition holds the x/y canvas coordinates for a node.
+// NodePosition is one node's canvas coordinates; the positions endpoints
+// take and return the map of node name to it, with no wrapper.
 type NodePosition struct {
 	X float64 `json:"x" example:"120.5"`
 	Y float64 `json:"y" example:"340.0"`
 }
 
-// NodePositionsRequest is the body for POST /network/positions/:ns.
-type NodePositionsRequest struct {
-	Positions map[string]NodePosition `json:"positions"`
+// Layout is a namespace's graph layout, the positions of its nodes and the
+// annotations drawn on it, one document kept in the namespace.
+type Layout struct {
+	Positions   map[string]NodePosition `json:"positions"`
+	Annotations []Annotation            `json:"annotations"`
 }
 
-// NodePositionsResponse is returned by GET /network/positions/:ns.
-type NodePositionsResponse struct {
-	Positions map[string]NodePosition `json:"positions"`
+// Annotation is a note, rectangle or ellipse on the graph. Colour, border
+// and text size are the names of the graph's palette, not free values.
+type Annotation struct {
+	ID     string  `json:"id" example:"a1"`
+	Type   string  `json:"type" example:"rect"`
+	X      float64 `json:"x" example:"40"`
+	Y      float64 `json:"y" example:"60"`
+	Width  float64 `json:"width,omitempty" example:"320"`
+	Height float64 `json:"height,omitempty" example:"200"`
+	Text   string  `json:"text,omitempty" example:"Site A"`
+	Color  string  `json:"color,omitempty" example:"blue"`
+	Border string  `json:"border,omitempty" example:"dashed"`
+	// The fill: none, glass (the default) or solid.
+	Fill     string `json:"fill,omitempty" example:"solid"`
+	TextSize string `json:"text_size,omitempty" example:"md"`
+	// Where the text sits in the shape: a corner, a side or the centre.
+	TextAnchor string `json:"text_anchor,omitempty" example:"center"`
+	Locked     bool   `json:"locked,omitempty"`
+	Z          int    `json:"z,omitempty"`
 }
 
 // ─── Files ────────────────────────────────────────────────────────────────────
@@ -457,6 +493,15 @@ type DriverInfo struct {
 	Capabilities             []CapabilityEntry            `json:"capabilities"`
 	InterfaceNameConstraints *InterfaceNameConstraintsDoc `json:"interfaceNameConstraints,omitempty"`
 	Tools                    []string                     `json:"tools" example:"trace,iperf"`
+	KnownImages              []string                     `json:"knownImages" example:"quay.io/frrouting/frr:10.7.1"`
+	Shells                   []DriverShellEntry           `json:"shells"`
+	Aliases                  []string                     `json:"aliases" example:"BasicHostDriver"`
+}
+
+// DriverShellEntry is one shell a driver's nodes open, by its mode.
+type DriverShellEntry struct {
+	Mode  string `json:"mode" example:"vtysh"`
+	Label string `json:"label" example:"vtysh console"`
 }
 
 // DriversListResponse is returned by GET /drivers/.
@@ -475,9 +520,17 @@ type DriverMethodParamEntry struct {
 
 // DriverMethodEntry describes one action a driver supports.
 type DriverMethodEntry struct {
-	Name   string                   `json:"name" example:"link_up"`
-	Label  string                   `json:"label" example:"Bring interface up"`
-	Params []DriverMethodParamEntry `json:"params"`
+	Name    string                    `json:"name" example:"link_up"`
+	Label   string                    `json:"label" example:"Bring interface up"`
+	Params  []DriverMethodParamEntry  `json:"params"`
+	Example *DriverMethodExampleEntry `json:"example,omitempty"`
+}
+
+// DriverMethodExampleEntry is what the action resolves to for sample
+// parameters, absent for a driver that plans from the pod.
+type DriverMethodExampleEntry struct {
+	Params   map[string]interface{} `json:"params"`
+	Commands []string               `json:"commands" example:"ip link set eth1 up"`
 }
 
 // CapabilityEntry describes one capability of a driver.

@@ -58,6 +58,9 @@ type ActionEntry struct {
 	Gateway string `json:"gateway,omitempty" example:"192.168.1.254"`
 	DstCIDR string `json:"dst_cidr,omitempty" example:"10.0.0.0/8"`
 	Device  string `json:"device,omitempty" example:"/dev/net/tun"`
+	// MAC is the address set_mac gives an interface, or the one a static
+	// neighbor (add_static_neighbor, keyed by iface and neighbor) resolves to.
+	MAC string `json:"mac,omitempty" example:"02:00:00:00:01:01"`
 	// Family picks IPv4 or IPv6 for an action that carries no address to
 	// tell them apart (remove_default_route); 4 when empty.
 	Family     string   `json:"family,omitempty" example:"6"`
@@ -71,6 +74,12 @@ type ActionEntry struct {
 	Protocols  string   `json:"protocols,omitempty" example:"OpenFlow13"`
 	DatapathID string   `json:"datapath_id,omitempty" example:"0x1"`
 	Flow       string   `json:"flow,omitempty" example:"priority=100,in_port=1,actions=drop"`
+	// P4: a table, one of its actions, the match fields and the action's
+	// parameters as simple_switch_CLI takes them, values separated by spaces.
+	Table  string `json:"table,omitempty" example:"MyIngress.ipv4_lpm"`
+	Action string `json:"action,omitempty" example:"MyIngress.ipv4_forward"`
+	Match  string `json:"match,omitempty" example:"10.0.2.2/32"`
+	Params string `json:"params,omitempty" example:"08:00:00:00:02:22 2"`
 	// File names a file of the namespace's file manager; the planner reads
 	// it into FileContent when the action runs, so history keeps the name.
 	File        string         `json:"file,omitempty" example:"faucet.yaml"`
@@ -96,8 +105,11 @@ type ActionEntry struct {
 	RouterID string `json:"router_id,omitempty" example:"10.0.255.1"`
 	// OSPF interface parameters. Priority 0 means never the DR, so a pointer
 	// tells it apart from unset. Intervals are seconds.
-	Cost          int    `json:"cost,omitempty" example:"100"`
-	Priority      *int   `json:"priority,omitempty" example:"255"`
+	Cost     int  `json:"cost,omitempty" example:"100"`
+	Priority *int `json:"priority,omitempty" example:"255"`
+	// Group and Ports are a P4 multicast group and the ports it copies to.
+	Group         int    `json:"group,omitempty" example:"1"`
+	Ports         []int  `json:"ports,omitempty"`
 	HelloInterval int    `json:"hello_interval,omitempty" example:"10"`
 	DeadInterval  int    `json:"dead_interval,omitempty" example:"40"`
 	NetworkType   string `json:"network_type,omitempty" example:"point-to-point"`
@@ -115,7 +127,7 @@ type ActionEntry struct {
 
 	// BGP: the local AS of bgp_set_router, a neighbour by address with its
 	// AS, the interface or address the session binds to, and the TTL an
-	// eBGP session may cross.
+	// eBGP session may cross. Neighbor is also a static neighbour's address.
 	AS           int    `json:"as,omitempty" example:"65001"`
 	RemoteAS     int    `json:"remote_as,omitempty" example:"65002"`
 	Neighbor     string `json:"neighbor,omitempty" example:"10.0.0.2"`

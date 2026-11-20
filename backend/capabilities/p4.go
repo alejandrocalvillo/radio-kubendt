@@ -1,0 +1,197 @@
+package capabilities
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"kubendt/actions"
+	"kubendt/types"
+)
+
+// P4Capable is a BMv2 switch: the program it runs, a compiled JSON from the
+// file manager swapped in place, the entries of its tables and the groups of
+// its replication engine. A new program comes up with empty tables, so
+// load_program takes the entries' state down and they are applied again
+// after it; the multicast groups live outside the program and survive it.
+type P4Capable interface {
+	LoadProgram(content string) [][]string
+	TableAdd(table, action, match, params string, priority int) [][]string
+	TableDelete(table, match string, priority int) [][]string
+	TableSetDefault(table, action, params string) [][]string
+	AddMulticastGroup(group int, ports []int) [][]string
+	RemoveMulticastGroup(group int) [][]string
+}
+
+type P4Inspector interface {
+	P4Ports(namespace, pod string) (Rows, error)
+	P4Tables(namespace, pod string) (Rows, error)
+	P4Entries(namespace, pod string) (Rows, error)
+	P4MulticastGroups(namespace, pod string) (Rows, error)
+	P4Counters(namespace, pod string) (Rows, error)
+	P4Registers(namespace, pod string) (Rows, error)
+}
+
+// A group is what v1model's mcast_grp names, 0 meaning none; a port is a
+// 9-bit egress_spec.
+const (
+	maxP4Group = 65535
+	maxP4Port  = 511
+)
+
+func checkP4Group(group int) error {
+	if group < 1 || group > maxP4Group {
+		return fmt.Errorf("group must be between 1 and %d, got %d", maxP4Group, group)
+	}
+	return nil
+}
+
+func checkP4Ports(ports []int) error {
+	if len(ports) == 0 {
+		return fmt.Errorf("ports must name at least one port")
+	}
+	for _, p := range ports {
+		if p < 1 || p > maxP4Port {
+			return fmt.Errorf("ports must be between 1 and %d, got %d", maxP4Port, p)
+		}
+	}
+	return nil
+}
+
+const maxP4Program = 4 << 20
+
+var p4NameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+func checkP4Program(content string) error {
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("the program file is empty")
+	}
+	if len(content) > maxP4Program {
+		return fmt.Errorf("the program file is over %d MiB", maxP4Program>>20)
+	}
+	if !json.Valid([]byte(content)) {
+		return fmt.Errorf("the program file is not the JSON p4c produces for bmv2")
+	}
+	return nil
+}
+
+func checkP4Name(what, name string) error {
+	if !p4NameRe.MatchString(name) {
+		return fmt.Errorf("%s must be a P4 name like MyIngress.ipv4_lpm, got %q", what, name)
+	}
+	return nil
+}
+
+// checkP4Text keeps the match fields and action parameters on one CLI line:
+// values separated by spaces, as simple_switch_CLI takes them.
+func checkP4Text(what, s string) error {
+	if strings.ContainsAny(s, "\n\r\"'`|;&$") || strings.Contains(s, "=>") {
+		return fmt.Errorf("%s must be values separated by spaces, got %q", what, s)
+	}
+	return nil
+}
+
+func p4Priority(a types.ActionEntry) int {
+	if a.Priority == nil {
+		return -1
+	}
+	return *a.Priority
+}
+
+func keyTable(a types.ActionEntry) string { return a.Table }
+func keyGroup(a types.ActionEntry) string { return strconv.Itoa(a.Group) }
+func keyTableEntry(a types.ActionEntry) string {
+	k := a.Table + " " + a.Match
+	if p := p4Priority(a); p >= 0 {
+		k += " " + strconv.Itoa(p)
+	}
+	return k
+}
+
+func init() {
+	actions.Register[P4Capable](
+		actions.Capability{ID: "P4Capable", Label: "P4", Description: "The program a BMv2 switch runs and the entries of its tables."},
+		actions.Action[P4Capable]{Type: "load_program", Label: "Load program", Params: actions.P(actions.ConfigFile), State: "p4_program", ClearsAlso: []string{"p4_table_entry", "p4_table_default"},
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Program(a.FileContent); err != nil {
+					return nil, err
+				}
+				return c.LoadProgram(a.FileContent), nil
+			}},
+		actions.Action[P4Capable]{Type: "table_add", Label: "Add table entry", Params: actions.P(actions.Table, actions.P4Action, actions.Match, actions.ActionParams.Optional(), actions.Priority.Optional()), State: "p4_table_entry", Key: keyTableEntry,
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Name("table", a.Table); err != nil {
+					return nil, err
+				}
+				if err := checkP4Name("action", a.Action); err != nil {
+					return nil, err
+				}
+				if err := checkP4Text("match", a.Match); err != nil {
+					return nil, err
+				}
+				if err := checkP4Text("params", a.Params); err != nil {
+					return nil, err
+				}
+				return c.TableAdd(a.Table, a.Action, a.Match, a.Params, p4Priority(a)), nil
+			}},
+		actions.Action[P4Capable]{Type: "table_delete", Label: "Delete table entry", Params: actions.P(actions.Table, actions.Match, actions.Priority.Optional()), State: "p4_table_entry", Key: keyTableEntry, Clears: true,
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Name("table", a.Table); err != nil {
+					return nil, err
+				}
+				if err := checkP4Text("match", a.Match); err != nil {
+					return nil, err
+				}
+				return c.TableDelete(a.Table, a.Match, p4Priority(a)), nil
+			}},
+		actions.Action[P4Capable]{Type: "table_set_default", Label: "Set default action", Params: actions.P(actions.Table, actions.P4Action, actions.ActionParams.Optional()), State: "p4_table_default", Key: keyTable,
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Name("table", a.Table); err != nil {
+					return nil, err
+				}
+				if err := checkP4Name("action", a.Action); err != nil {
+					return nil, err
+				}
+				if err := checkP4Text("params", a.Params); err != nil {
+					return nil, err
+				}
+				return c.TableSetDefault(a.Table, a.Action, a.Params), nil
+			}},
+		actions.Action[P4Capable]{Type: "add_multicast_group", Label: "Add multicast group", Params: actions.P(actions.Group, actions.Ports), State: "p4_mcast_group", Key: keyGroup,
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Group(a.Group); err != nil {
+					return nil, err
+				}
+				if err := checkP4Ports(a.Ports); err != nil {
+					return nil, err
+				}
+				return c.AddMulticastGroup(a.Group, a.Ports), nil
+			}},
+		actions.Action[P4Capable]{Type: "remove_multicast_group", Label: "Remove multicast group", Params: actions.P(actions.Group), State: "p4_mcast_group", Key: keyGroup, Clears: true,
+			Run: func(c P4Capable, a types.ActionEntry) ([][]string, error) {
+				if err := checkP4Group(a.Group); err != nil {
+					return nil, err
+				}
+				return c.RemoveMulticastGroup(a.Group), nil
+			}},
+	)
+	actions.RegisterInspections[P4Inspector]("P4Capable",
+		actions.Inspection[P4Inspector]{ID: "p4_ports", Label: "P4 ports", Columns: cols("port", "Port", "iface", "Interface", "status", "Status"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4Ports(ns, pod) }},
+		actions.Inspection[P4Inspector]{ID: "p4_tables", Label: "P4 tables", Columns: cols("table", "Table", "match", "Match fields"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4Tables(ns, pod) }},
+		// The match values come as the CLI prints them, hex of the field's width.
+		actions.Inspection[P4Inspector]{ID: "p4_entries", Label: "P4 table entries", Columns: cols("match", "Match", "table", "Table", "action", "Action", "params", "Parameters", "handle", "Handle"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4Entries(ns, pod) }},
+		actions.Inspection[P4Inspector]{ID: "p4_multicast_groups", Label: "P4 multicast groups", Columns: cols("group", "Group", "ports", "Ports", "handle", "Node"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4MulticastGroups(ns, pod) }},
+		// What the program declares: a direct counter per entry of its table (the
+		// index is the entry's handle), the cells of an indexed counter or a
+		// register that hold something.
+		actions.Inspection[P4Inspector]{ID: "p4_counters", Label: "P4 counters", Columns: cols("counter", "Counter", "index", "Index", "packets", "Packets", "bytes", "Bytes", "table", "Table"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4Counters(ns, pod) }},
+		actions.Inspection[P4Inspector]{ID: "p4_registers", Label: "P4 registers", Columns: cols("register", "Register", "index", "Index", "value", "Value", "hex", "Hex"),
+			Run: func(c P4Inspector, ns, pod string) (Rows, error) { return c.P4Registers(ns, pod) }})
+}

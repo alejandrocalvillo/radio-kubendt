@@ -8,6 +8,7 @@
       ["configure vlan br0 add ports 1 untagged"]
     ]
   },
+  "add_multicast_group": { "unsupported": true },
   "add_qdisc": {
     "executor": "tc_universal",
     "commands": [
@@ -15,6 +16,7 @@
       ["tc","qdisc","replace","dev","1","root","netem","delay","50ms","5ms","loss","1%","rate","10mbit"]
     ]
   },
+  "add_static_neighbor": { "unsupported": true },
   "add_static_route": { "unsupported": true },
   "add_vlan_subinterface": { "unsupported": true },
   "bgp_add_neighbor": { "unsupported": true },
@@ -70,6 +72,7 @@
       ["enable ports 1"]
     ]
   },
+  "load_program": { "unsupported": true },
   "nat64_disable": { "unsupported": true },
   "nat64_enable": { "unsupported": true },
   "ospf6_add_interface": { "unsupported": true },
@@ -121,6 +124,8 @@
     ]
   },
   "remove_ip": { "unsupported": true },
+  "remove_multicast_group": { "unsupported": true },
+  "remove_static_neighbor": { "unsupported": true },
   "remove_static_route": { "unsupported": true },
   "remove_vlan_subinterface": { "unsupported": true },
   "replace_ip": { "unsupported": true },
@@ -138,6 +143,7 @@
   "set_dns": { "unsupported": true },
   "set_fail_mode": { "unsupported": true },
   "set_ip": { "unsupported": true },
+  "set_mac": { "unsupported": true },
   "setup_bridge": {
     "executor": "exos_api",
     "commands": [
@@ -174,6 +180,9 @@
       ["configure stpd s0 ports port-priority 64 1"]
     ]
   },
+  "table_add": { "unsupported": true },
+  "table_delete": { "unsupported": true },
+  "table_set_default": { "unsupported": true },
   "teardown_bridge": {
     "executor": "exos_api",
     "commands": [

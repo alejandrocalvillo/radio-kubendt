@@ -31,6 +31,7 @@ func NewXRDRouterDriver() *XRDRouterDriver {
 var _ capabilities.L2Capable = (*XRDRouterDriver)(nil)
 var _ capabilities.L3Capable = (*XRDRouterDriver)(nil)
 var _ drivers_meta.EffectiveInterfaceInspector = (*XRDRouterDriver)(nil)
+var _ drivers_meta.PodBoundPlanner = (*XRDRouterDriver)(nil)
 var _ drivers_meta.EffectiveSingleInterfaceInspector = (*XRDRouterDriver)(nil)
 var _ drivers_meta.EffectiveInterfaceStateInspector = (*XRDRouterDriver)(nil)
 var _ drivers_meta.GuestInterfaceMapper = (*XRDRouterDriver)(nil)
@@ -65,6 +66,19 @@ func (XRDRouterDriver) LinkUp(iface string) [][]string {
 
 func (XRDRouterDriver) LinkDown(iface string) [][]string {
 	return [][]string{{"interface " + iface, "shutdown"}}
+}
+
+func (XRDRouterDriver) SetMAC(iface, mac string) [][]string {
+	return [][]string{{"interface " + iface, " mac-address " + xrMAC(mac)}}
+}
+
+// xrMAC writes a MAC the IOS XR way, three groups of four hex digits.
+func xrMAC(mac string) string {
+	hex := strings.ToLower(strings.NewReplacer(":", "", "-", "", ".", "").Replace(mac))
+	if len(hex) != 12 {
+		return mac
+	}
+	return hex[0:4] + "." + hex[4:8] + "." + hex[8:12]
 }
 
 // ─── L3 ──────────────────────────────────────────────────────────────────────
@@ -103,6 +117,15 @@ func (XRDRouterDriver) AddStaticRoute(dstCIDR, via, dev string) [][]string {
 
 func (XRDRouterDriver) RemoveStaticRoute(dstCIDR, via, dev string) [][]string {
 	return [][]string{{"router static", "address-family ipv4 unicast", " no " + dstCIDR, "!"}}
+}
+
+// IOS XR keys a static ARP entry by address, not by interface.
+func (XRDRouterDriver) AddStaticNeighbor(iface, address, mac string) [][]string {
+	return [][]string{{"arp " + address + " " + xrMAC(mac) + " arpa"}}
+}
+
+func (XRDRouterDriver) RemoveStaticNeighbor(iface, address string) [][]string {
+	return [][]string{{"no arp " + address}}
 }
 
 func (XRDRouterDriver) AddDNSNameserver(server string) [][]string {
@@ -149,6 +172,10 @@ func (d *XRDRouterDriver) GuestInterface(namespace, podName, podInterface string
 	}
 	return g, nil
 }
+
+// PlansFromPod: the XR interface names come from the pod's map, so no
+// action resolves without one.
+func (*XRDRouterDriver) PlansFromPod() bool { return true }
 
 // xrCIDRToIPMask convierte "10.0.0.1/24" a ("10.0.0.1", "255.255.255.0", nil).
 // IOS-XR does not accept CIDR notation in interface commands.

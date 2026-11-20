@@ -40,3 +40,4 @@ experiments/results/
 experiments/topologies/
 experiments/__pycache__/
 radio/__pycache__/
+experiments/pictures/node_modules/

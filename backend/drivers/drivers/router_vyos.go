@@ -282,6 +282,10 @@ func (VyOSRouterDriver) LinkUp(iface string) [][]string {
 	return [][]string{{"delete interfaces " + vyosIfacePath(iface) + " disable"}}
 }
 
+func (VyOSRouterDriver) SetMAC(iface, mac string) [][]string {
+	return [][]string{{"set interfaces " + vyosIfacePath(iface) + " mac " + mac}}
+}
+
 // ─── L3 ──────────────────────────────────────────────────────────────────────
 
 func (VyOSRouterDriver) SetIP(iface, cidr string) [][]string {
@@ -328,6 +332,15 @@ func (VyOSRouterDriver) AddStaticRoute(dstCIDR, via, dev string) [][]string {
 
 func (VyOSRouterDriver) RemoveStaticRoute(dstCIDR, via, dev string) [][]string {
 	return [][]string{{"delete " + vyosStaticRoute(dstCIDR) + dstCIDR + " next-hop " + via}}
+}
+
+// A static ARP entry hangs off the plain interface name, vifs included.
+func (VyOSRouterDriver) AddStaticNeighbor(iface, address, mac string) [][]string {
+	return [][]string{{"set protocols static arp interface " + iface + " address " + address + " mac " + mac}}
+}
+
+func (VyOSRouterDriver) RemoveStaticNeighbor(iface, address string) [][]string {
+	return [][]string{{"delete protocols static arp interface " + iface + " address " + address}}
 }
 
 func (VyOSRouterDriver) AddDNSNameserver(server string) [][]string {
@@ -482,6 +495,23 @@ func (d VyOSRouterDriver) Routes(namespace, pod string) (capabilities.Rows, erro
 // interface of the node.
 func (VyOSRouterDriver) Neighbors(namespace, pod string) (capabilities.Rows, error) {
 	rows, err := capabilities.LinuxNeighborsThrough(func(argv []string) ([]byte, error) {
+		return executor.ExecAndGet(namespace, pod, append([]string{"ssh_qemu", "sudo"}, argv...))
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := rows[:0]
+	for _, r := range rows {
+		if r["interface"] != vyosInternalMgmtIface {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// Interfaces reads the guest's, without the slirp management NIC either.
+func (VyOSRouterDriver) Interfaces(namespace, pod string) (capabilities.Rows, error) {
+	rows, err := capabilities.LinuxInterfacesThrough(func(argv []string) ([]byte, error) {
 		return executor.ExecAndGet(namespace, pod, append([]string{"ssh_qemu", "sudo"}, argv...))
 	})
 	if err != nil {

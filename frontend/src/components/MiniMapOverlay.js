@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MiniMap } from 'reactflow';
-import { ReactComponent as MinusIcon } from '../assets/images/icons/minus.svg';
+import { ReactComponent as MinimizeIcon } from '../assets/images/icons/minimize.svg';
 import { ReactComponent as MaximizeIcon } from '../assets/images/icons/maximize.svg';
 import './MiniMapOverlay.css';
 
@@ -22,7 +22,7 @@ const storeHidden = (hidden) => {
   }
 };
 
-const MiniMapOverlay = ({ nodes, selectedNodeId }) => {
+const MiniMapOverlay = ({ selectedNodeId }) => {
   const [hidden, setHidden] = useState(readHidden);
   const toggle = () => {
     setHidden((h) => {
@@ -34,6 +34,8 @@ const MiniMapOverlay = ({ nodes, selectedNodeId }) => {
   const getColor = (node) => {
     const type = node.data?.type || node.type;
     switch (type) {
+      case 'annotation':
+        return 'transparent';
       case 'router':
         return '#3b82f6';
       case 'switch':
@@ -53,6 +55,7 @@ const MiniMapOverlay = ({ nodes, selectedNodeId }) => {
 
   const getClassName = (node) => {
     const type = node.data?.type || node.type;
+    if (type === 'annotation') return 'minimap-node shape';
     const base =
       type === 'router'
         ? 'minimap-node router'
@@ -87,10 +90,9 @@ const MiniMapOverlay = ({ nodes, selectedNodeId }) => {
         aria-label="Hide the minimap"
         onClick={toggle}
       >
-        <MinusIcon className="app-icon" />
+        <MinimizeIcon className="app-icon" />
       </button>
       <MiniMap
-        nodes={nodes}
         nodeColor={getColor}
         nodeStrokeColor="#111"
         nodeStrokeWidth={1.5}

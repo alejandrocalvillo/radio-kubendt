@@ -22,9 +22,13 @@ import { ReactComponent as CloseIcon } from '../assets/images/icons/close.svg';
 import { ReactComponent as RefreshIcon } from '../assets/images/icons/refresh.svg';
 import { ReactComponent as BookIcon } from '../assets/images/icons/book.svg';
 import RadioZoneCard from '../components/RadioZoneCard';
+import { ReactComponent as BoxIcon } from '../assets/images/icons/box.svg';
 import './Home.css';
 
 Modal.setAppElement('#root');
+
+// Names the UI routes as pages of its own; the backend refuses them too.
+const RESERVED_NAMESPACE_NAMES = ['drivers'];
 
 const Home = () => {
   const [namespaces, setNamespaces] = useState([]);
@@ -105,6 +109,8 @@ const Home = () => {
   const validateNamespaceName = (name) => {
     if (!name) return { ok: null, message: '' };
     if (name.length > 63) return { ok: false, message: 'Too long (max 63 characters).' };
+    if (RESERVED_NAMESPACE_NAMES.includes(name))
+      return { ok: false, message: `'${name}' is a page of the UI, pick another name.` };
     if (/[A-Z]/.test(name)) return { ok: false, message: 'Use lowercase letters only.' };
     if (/[^a-z0-9-]/.test(name))
       return { ok: false, message: "Only lowercase letters, numbers and '-' are allowed." };
@@ -540,6 +546,14 @@ const Home = () => {
         <div className="home-header-right">
           <button className="open-api-btn" onClick={() => navigate('/radio')} title="Pick the area a radio scenario emulates">
             Radio zones
+          </button>
+          <button
+            className="open-api-btn"
+            onClick={() => navigate('/drivers')}
+            title="Every driver and what its nodes can do"
+          >
+            <BoxIcon className="app-icon" aria-hidden="true" />
+            Drivers
           </button>
           <button className="open-api-btn" onClick={handleOpenSwagger}>
             <BookIcon className="app-icon" aria-hidden="true" />

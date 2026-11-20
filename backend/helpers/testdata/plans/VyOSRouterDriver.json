@@ -13,11 +13,18 @@
   },
   "add_flow": { "unsupported": true },
   "add_interface_to_bridge": { "unsupported": true },
+  "add_multicast_group": { "unsupported": true },
   "add_qdisc": {
     "executor": "tc_universal",
     "commands": [
       ["tc","qdisc","replace","dev","eth1","root","noqueue"],
       ["tc","qdisc","replace","dev","eth1","root","netem","delay","50ms","5ms","loss","1%","rate","10mbit"]
+    ]
+  },
+  "add_static_neighbor": {
+    "executor": "vyos_api_apply",
+    "commands": [
+      ["set protocols static arp interface eth1 address 10.0.1.254 mac 08:00:00:00:00:fe"]
     ]
   },
   "add_static_route": {
@@ -225,6 +232,7 @@
       ["delete interfaces ethernet eth1 disable"]
     ]
   },
+  "load_program": { "unsupported": true },
   "nat64_disable": {
     "executor": "vyos_api_apply",
     "commands": [
@@ -495,6 +503,13 @@
       ["delete interfaces ethernet eth1 address 10.0.0.1/24"]
     ]
   },
+  "remove_multicast_group": { "unsupported": true },
+  "remove_static_neighbor": {
+    "executor": "vyos_api_apply",
+    "commands": [
+      ["delete protocols static arp interface eth1 address 10.0.1.254"]
+    ]
+  },
   "remove_static_route": {
     "executor": "vyos_api_apply",
     "commands": [
@@ -589,11 +604,20 @@
       ["set interfaces ethernet eth1 address 10.0.0.1/24"]
     ]
   },
+  "set_mac": {
+    "executor": "vyos_api_apply",
+    "commands": [
+      ["set interfaces ethernet eth1 mac 08:00:00:00:01:11"]
+    ]
+  },
   "setup_bridge": { "unsupported": true },
   "stp_disable": { "unsupported": true },
   "stp_enable": { "unsupported": true },
   "stp_set_bridge_priority": { "unsupported": true },
   "stp_set_port": { "unsupported": true },
+  "table_add": { "unsupported": true },
+  "table_delete": { "unsupported": true },
+  "table_set_default": { "unsupported": true },
   "teardown_bridge": { "unsupported": true },
   "vlan_clear_port": { "unsupported": true },
   "vlan_set_access": { "unsupported": true },
