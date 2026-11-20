@@ -16,6 +16,8 @@ permissions:
 jobs:
   image:
     name: Build & publish kubendt-ovs
+    # Publishes to ghcr.io/emigcm98, so it runs only in the upstream repository, never in a fork.
+    if: github.repository == 'emigcm98/kubendt'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
